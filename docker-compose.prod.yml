@@ -1,0 +1,9 @@
+services:
+  db:
+    container_name: quote-db
+    ports:
+      - "5436:5432"
+  app:
+    container_name: quote-app
+    ports:
+      - "8084:8084"
