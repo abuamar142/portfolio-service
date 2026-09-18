@@ -22,19 +22,20 @@ func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit
 	offset := (page - 1) * limit
 
 	// Count total
-	countQuery := `SELECT COUNT(DISTINCT q.id) FROM quotes q`
-	args := []any{}
-	where := []string{}
-
-	if search != "" {
-		where = append(where, fmt.Sprintf("q.content ILIKE '%%%s%%'", search))
-	}
+	var countQuery string
+	var args []any
 	if tag != "" {
-		countQuery = `SELECT COUNT(DISTINCT q.id) FROM quotes q JOIN quote_tags qt ON qt.quote_id = q.id`
-		where = append(where, fmt.Sprintf("qt.tag = '%s'", tag))
-	}
-	if len(where) > 0 {
-		countQuery += " WHERE " + strings.Join(where, " AND ")
+		countQuery = `SELECT COUNT(DISTINCT qt.quote_id) FROM quote_tags qt WHERE qt.tag = $1`
+		args = append(args, tag)
+		if search != "" {
+			countQuery = `SELECT COUNT(DISTINCT q.id) FROM quotes q JOIN quote_tags qt ON qt.quote_id = q.id WHERE qt.tag = $1 AND q.content ILIKE '%' || $2 || '%'`
+			args = append(args, search)
+		}
+	} else if search != "" {
+		countQuery = `SELECT COUNT(*) FROM quotes q WHERE q.content ILIKE '%' || $1 || '%'`
+		args = append(args, search)
+	} else {
+		countQuery = `SELECT COUNT(*) FROM quotes q`
 	}
 
 	var total int
@@ -42,17 +43,20 @@ func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit
 		return nil, fmt.Errorf("counting quotes: %w", err)
 	}
 
-	// Fetch quotes
-	query := `
-		SELECT DISTINCT q.id, q.user_id, q.content, q.author_name, q.is_anonymous, q.source, q.color, q.created_at, q.updated_at
-		FROM quotes q`
+	// Fetch quotes — use subquery for DISTINCT when tag filter is active
+	var query string
 	if tag != "" {
-		query += ` JOIN quote_tags qt ON qt.quote_id = q.id`
+		query = fmt.Sprintf(`
+			SELECT q.id, q.user_id, q.content, q.author_name, q.is_anonymous, q.source, q.color, q.created_at, q.updated_at
+			FROM quotes q
+			WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quote_tags qt WHERE qt.tag = '%s')
+			ORDER BY random() LIMIT $1 OFFSET $2`, tag)
+	} else {
+		query = `
+			SELECT q.id, q.user_id, q.content, q.author_name, q.is_anonymous, q.source, q.color, q.created_at, q.updated_at
+			FROM quotes q
+			ORDER BY random() LIMIT $1 OFFSET $2`
 	}
-	if len(where) > 0 {
-		query += " WHERE " + strings.Join(where, " AND ")
-	}
-	query += ` ORDER BY random() LIMIT $1 OFFSET $2`
 
 	rows, err := s.pool.Query(ctx, query, limit, offset)
 	if err != nil {

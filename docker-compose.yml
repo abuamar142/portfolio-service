@@ -19,10 +19,17 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-quote}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-quote-db}?sslmode=disable
-      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://host.docker.internal:8080}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service-app:8080}
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - auth-service_default
+
+networks:
+  auth-service_default:
+    external: true
 
 volumes:
   quote-pgdata:
