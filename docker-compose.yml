@@ -23,6 +23,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - default
+      - abuamar-net
+
+networks:
+  abuamar-net:
+    external: true
 
 volumes:
   quote-pgdata:
