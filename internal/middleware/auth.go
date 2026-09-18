@@ -44,13 +44,12 @@ func GetUser(ctx context.Context) *models.AuthUser {
 }
 
 func validateToken(authServiceURL, token string) (*models.AuthUser, error) {
-	url := fmt.Sprintf("%s/api/v1/auth/validate", authServiceURL)
-	req, err := http.NewRequest("POST", url, nil)
+	url := fmt.Sprintf("%s/api/v1/auth/me", authServiceURL)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
