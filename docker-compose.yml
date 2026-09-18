@@ -23,13 +23,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    networks:
-      - default
-      - auth-service_default
-
-networks:
-  auth-service_default:
-    external: true
 
 volumes:
   quote-pgdata:
