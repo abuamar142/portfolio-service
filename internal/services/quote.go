@@ -25,10 +25,10 @@ func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit
 	var countQuery string
 	var args []any
 	if tag != "" {
-		countQuery = `SELECT COUNT(DISTINCT qt.quote_id) FROM quote_tags qt WHERE qt.tag = $1`
+		countQuery = `SELECT COUNT(DISTINCT qt.quote_id) FROM quote_tags qt JOIN tags t ON t.id = qt.tag_id WHERE t.name = $1`
 		args = append(args, tag)
 		if search != "" {
-			countQuery = `SELECT COUNT(DISTINCT q.id) FROM quotes q JOIN quote_tags qt ON qt.quote_id = q.id WHERE qt.tag = $1 AND q.content ILIKE '%' || $2 || '%'`
+			countQuery = `SELECT COUNT(DISTINCT q.id) FROM quotes q JOIN quote_tags qt ON qt.quote_id = q.id JOIN tags t ON t.id = qt.tag_id WHERE t.name = $1 AND q.content ILIKE '%' || $2 || '%'`
 			args = append(args, search)
 		}
 	} else if search != "" {
@@ -49,7 +49,7 @@ func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
 	paramIdx := 3
 	if tag != "" {
-		query += fmt.Sprintf(` WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quote_tags qt WHERE qt.tag = $%d)`, paramIdx)
+		query += fmt.Sprintf(` WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quote_tags qt JOIN tags t ON t.id = qt.tag_id WHERE t.name = $%d)`, paramIdx)
 		queryArgs = append(queryArgs, tag)
 		paramIdx++
 	}
@@ -82,7 +82,6 @@ func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit
 		q.Tags, _ = s.getTags(ctx, q.ID)
 		quotes = append(quotes, q)
 	}
-
 	return &models.QuoteListResponse{
 		Quotes: quotes,
 		Total:  total,
@@ -125,14 +124,22 @@ func (s *QuoteService) Create(ctx context.Context, userID uuid.UUID, req models.
 		if tag == "" {
 			continue
 		}
-		_, err := s.pool.Exec(ctx,
-			`INSERT INTO quote_tags (quote_id, tag) VALUES ($1, $2)`, q.ID, tag,
+		// Upsert tag to tags table
+		var tagID int
+		err := s.pool.QueryRow(ctx,
+			`INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
+		).Scan(&tagID)
+		if err != nil {
+			return nil, fmt.Errorf("upserting tag: %w", err)
+		}
+		// Insert quote_tags
+		_, err = s.pool.Exec(ctx,
+			`INSERT INTO quote_tags (quote_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, q.ID, tagID,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("inserting tag: %w", err)
+			return nil, fmt.Errorf("inserting quote_tag: %w", err)
 		}
 	}
-
 	q.Tags = req.Tags
 	return &q, nil
 }
@@ -156,9 +163,17 @@ func (s *QuoteService) Update(ctx context.Context, userID, quoteID uuid.UUID, re
 		if tag == "" {
 			continue
 		}
-		s.pool.Exec(ctx, `INSERT INTO quote_tags (quote_id, tag) VALUES ($1, $2)`, quoteID, tag)
+		// Upsert tag
+		var tagID int
+		err := s.pool.QueryRow(ctx,
+			`INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
+		).Scan(&tagID)
+		if err != nil {
+			return nil, fmt.Errorf("upserting tag: %w", err)
+		}
+		// Insert quote_tags
+		s.pool.Exec(ctx, `INSERT INTO quote_tags (quote_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, quoteID, tagID)
 	}
-
 	q.Tags = req.Tags
 	return &q, nil
 }
@@ -178,12 +193,15 @@ func (s *QuoteService) Delete(ctx context.Context, userID, quoteID uuid.UUID) er
 
 func (s *QuoteService) ListTags(ctx context.Context) ([]models.TagResponse, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT tag, COUNT(*) as count FROM quote_tags GROUP BY tag ORDER BY count DESC`)
+		`SELECT t.name, COUNT(qt.quote_id) as count
+		 FROM tags t
+		 LEFT JOIN quote_tags qt ON t.id = qt.tag_id
+		 GROUP BY t.id, t.name
+		 ORDER BY count DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("listing tags: %w", err)
 	}
 	defer rows.Close()
-
 	var tags []models.TagResponse
 	for rows.Next() {
 		var t models.TagResponse
@@ -196,12 +214,12 @@ func (s *QuoteService) ListTags(ctx context.Context) ([]models.TagResponse, erro
 }
 
 func (s *QuoteService) getTags(ctx context.Context, quoteID uuid.UUID) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT tag FROM quote_tags WHERE quote_id = $1`, quoteID)
+	rows, err := s.pool.Query(ctx,
+		`SELECT t.name FROM tags t JOIN quote_tags qt ON t.id = qt.tag_id WHERE qt.quote_id = $1`, quoteID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	var tags []string
 	for rows.Next() {
 		var tag string
