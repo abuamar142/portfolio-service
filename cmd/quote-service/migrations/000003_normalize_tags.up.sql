@@ -17,7 +17,9 @@ UPDATE quote_tags qt SET tag_id = (
     SELECT id FROM tags WHERE name = qt.tag
 );
 
--- 5. Drop old tag column, set NOT NULL
+-- 5. Drop old id PK, tag column, and set NOT NULL
+ALTER TABLE quote_tags DROP CONSTRAINT quote_tags_pkey;
+ALTER TABLE quote_tags DROP COLUMN id;
 ALTER TABLE quote_tags DROP COLUMN tag;
 ALTER TABLE quote_tags ALTER COLUMN tag_id SET NOT NULL;
 
