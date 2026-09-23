@@ -17,6 +17,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    ports:
+      - "127.0.0.1:8084:8084"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-quote}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-quote-db}?sslmode=disable
       AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service-app:8080}
