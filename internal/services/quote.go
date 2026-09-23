@@ -43,22 +43,31 @@ func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit
 		return nil, fmt.Errorf("counting quotes: %w", err)
 	}
 
-	// Fetch quotes — use subquery for DISTINCT when tag filter is active
+	// Fetch quotes with search/tag filters (parameterised — no sprintf injection)
 	var query string
+	var queryArgs []any
+	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
+	paramIdx := 3
 	if tag != "" {
-		query = fmt.Sprintf(`
-			SELECT q.id, q.user_id, q.content, q.author_name, q.is_anonymous, q.source, q.color, q.created_at, q.updated_at
-			FROM quotes q
-			WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quote_tags qt WHERE qt.tag = '%s')
-			ORDER BY random() LIMIT $1 OFFSET $2`, tag)
-	} else {
-		query = `
-			SELECT q.id, q.user_id, q.content, q.author_name, q.is_anonymous, q.source, q.color, q.created_at, q.updated_at
-			FROM quotes q
-			ORDER BY random() LIMIT $1 OFFSET $2`
+		query += fmt.Sprintf(` WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quote_tags qt WHERE qt.tag = $%d)`, paramIdx)
+		queryArgs = append(queryArgs, tag)
+		paramIdx++
 	}
+	if search != "" {
+		if tag != "" {
+			query += fmt.Sprintf(` AND q.content ILIKE '%%' || $%d || '%%'`, paramIdx)
+		} else {
+			query += fmt.Sprintf(` WHERE q.content ILIKE '%%' || $%d || '%%'`, paramIdx)
+		}
+		queryArgs = append(queryArgs, search)
+		paramIdx++
+	}
+	query = fmt.Sprintf(`
+		SELECT q.id, q.user_id, q.content, q.author_name, q.is_anonymous, q.source, q.color, q.created_at, q.updated_at
+		FROM quotes q%s
+		ORDER BY random() LIMIT $1 OFFSET $2`, query)
 
-	rows, err := s.pool.Query(ctx, query, limit, offset)
+	rows, err := s.pool.Query(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("listing quotes: %w", err)
 	}
