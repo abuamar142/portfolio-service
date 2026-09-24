@@ -25,17 +25,17 @@ func (s *LinkService) List(ctx context.Context, search, tag string, page, limit 
 	var countQuery string
 	var args []any
 	if tag != "" {
-		countQuery = `SELECT COUNT(DISTINCT lt.link_id) FROM link_tags lt JOIN tags t ON t.id = lt.tag_id WHERE t.name = $1`
+		countQuery = `SELECT COUNT(DISTINCT lt.link_id) FROM links.link_tags lt JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = $1`
 		args = append(args, tag)
 		if search != "" {
-			countQuery = `SELECT COUNT(DISTINCT l.id) FROM links l JOIN link_tags lt ON lt.link_id = l.id JOIN tags t ON t.id = lt.tag_id WHERE t.name = $1 AND (l.title ILIKE '%' || $2 || '%' OR l.description ILIKE '%' || $2 || '%' OR l.url ILIKE '%' || $2 || '%')`
+			countQuery = `SELECT COUNT(DISTINCT l.id) FROM links.links l JOIN links.link_tags lt ON lt.link_id = l.id JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = $1 AND (l.title ILIKE '%' || $2 || '%' OR l.description ILIKE '%' || $2 || '%' OR l.url ILIKE '%' || $2 || '%')`
 			args = append(args, search)
 		}
 	} else if search != "" {
-		countQuery = `SELECT COUNT(*) FROM links l WHERE l.title ILIKE '%' || $1 || '%' OR l.description ILIKE '%' || $1 || '%' OR l.url ILIKE '%' || $1 || '%'`
+		countQuery = `SELECT COUNT(*) FROM links.links l WHERE l.title ILIKE '%' || $1 || '%' OR l.description ILIKE '%' || $1 || '%' OR l.url ILIKE '%' || $1 || '%'`
 		args = append(args, search)
 	} else {
-		countQuery = `SELECT COUNT(*) FROM links l`
+		countQuery = `SELECT COUNT(*) FROM links.links l`
 	}
 
 	var total int
@@ -49,7 +49,7 @@ func (s *LinkService) List(ctx context.Context, search, tag string, page, limit 
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
 	paramIdx := 3
 	if tag != "" {
-		query += fmt.Sprintf(` WHERE l.id IN (SELECT DISTINCT lt.link_id FROM link_tags lt JOIN tags t ON t.id = lt.tag_id WHERE t.name = $%d)`, paramIdx)
+		query += fmt.Sprintf(` WHERE l.id IN (SELECT DISTINCT lt.link_id FROM links.link_tags lt JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = $%d)`, paramIdx)
 		queryArgs = append(queryArgs, tag)
 		paramIdx++
 	}
@@ -65,7 +65,7 @@ func (s *LinkService) List(ctx context.Context, search, tag string, page, limit 
 	}
 	query = fmt.Sprintf(`
 		SELECT l.id, l.user_id, l.url, l.title, l.description, l.created_at, l.updated_at
-		FROM links l%s
+		FROM links.links l%s
 		ORDER BY l.created_at DESC LIMIT $1 OFFSET $2`, query)
 
 	rows, err := s.pool.Query(ctx, query, queryArgs...)
@@ -95,7 +95,7 @@ func (s *LinkService) GetByID(ctx context.Context, id uuid.UUID) (*models.Link, 
 	var l models.Link
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, user_id, url, title, description, created_at, updated_at
-		 FROM links WHERE id = $1`, id,
+		 FROM links.links WHERE id = $1`, id,
 	).Scan(&l.ID, &l.UserID, &l.URL, &l.Title, &l.Description, &l.CreatedAt, &l.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("getting link: %w", err)
@@ -107,7 +107,7 @@ func (s *LinkService) GetByID(ctx context.Context, id uuid.UUID) (*models.Link, 
 func (s *LinkService) Create(ctx context.Context, userID uuid.UUID, req models.CreateLinkRequest) (*models.Link, error) {
 	var l models.Link
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO links (user_id, url, title, description)
+		`INSERT INTO links.links (user_id, url, title, description)
 		 VALUES ($1, $2, $3, $4)
 		 RETURNING id, user_id, url, title, description, created_at, updated_at`,
 		userID, req.URL, req.Title, req.Description,
@@ -125,14 +125,14 @@ func (s *LinkService) Create(ctx context.Context, userID uuid.UUID, req models.C
 		// Upsert tag to tags table
 		var tagID int
 		err := s.pool.QueryRow(ctx,
-			`INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
+			`INSERT INTO links.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
 		).Scan(&tagID)
 		if err != nil {
 			return nil, fmt.Errorf("upserting tag: %w", err)
 		}
 		// Insert link_tags
 		_, err = s.pool.Exec(ctx,
-			`INSERT INTO link_tags (link_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, l.ID, tagID,
+			`INSERT INTO links.link_tags (link_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, l.ID, tagID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("inserting link_tag: %w", err)
@@ -145,7 +145,7 @@ func (s *LinkService) Create(ctx context.Context, userID uuid.UUID, req models.C
 func (s *LinkService) Update(ctx context.Context, userID, linkID uuid.UUID, req models.UpdateLinkRequest) (*models.Link, error) {
 	var l models.Link
 	err := s.pool.QueryRow(ctx,
-		`UPDATE links SET url=$1, title=$2, description=$3, updated_at=NOW()
+		`UPDATE links.links SET url=$1, title=$2, description=$3, updated_at=NOW()
 		 WHERE id=$4 AND user_id=$5
 		 RETURNING id, user_id, url, title, description, created_at, updated_at`,
 		req.URL, req.Title, req.Description, linkID, userID,
@@ -155,7 +155,7 @@ func (s *LinkService) Update(ctx context.Context, userID, linkID uuid.UUID, req 
 	}
 
 	// Replace tags
-	s.pool.Exec(ctx, `DELETE FROM link_tags WHERE link_id = $1`, linkID)
+	s.pool.Exec(ctx, `DELETE FROM links.link_tags WHERE link_id = $1`, linkID)
 	for _, tag := range req.Tags {
 		tag = strings.TrimSpace(strings.ToLower(tag))
 		if tag == "" {
@@ -164,13 +164,13 @@ func (s *LinkService) Update(ctx context.Context, userID, linkID uuid.UUID, req 
 		// Upsert tag
 		var tagID int
 		err := s.pool.QueryRow(ctx,
-			`INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
+			`INSERT INTO links.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
 		).Scan(&tagID)
 		if err != nil {
 			return nil, fmt.Errorf("upserting tag: %w", err)
 		}
 		// Insert link_tags
-		s.pool.Exec(ctx, `INSERT INTO link_tags (link_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, linkID, tagID)
+		s.pool.Exec(ctx, `INSERT INTO links.link_tags (link_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, linkID, tagID)
 	}
 	l.Tags = req.Tags
 	return &l, nil
@@ -178,7 +178,7 @@ func (s *LinkService) Update(ctx context.Context, userID, linkID uuid.UUID, req 
 
 func (s *LinkService) Delete(ctx context.Context, userID, linkID uuid.UUID) error {
 	result, err := s.pool.Exec(ctx,
-		`DELETE FROM links WHERE id = $1 AND user_id = $2`, linkID, userID,
+		`DELETE FROM links.links WHERE id = $1 AND user_id = $2`, linkID, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("deleting link: %w", err)
@@ -194,8 +194,8 @@ func (s *LinkService) Delete(ctx context.Context, userID, linkID uuid.UUID) erro
 func (s *LinkService) ListTags(ctx context.Context) ([]models.TagResponse, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT t.name, COUNT(lt.link_id) as count
-		 FROM tags t
-		 JOIN link_tags lt ON t.id = lt.tag_id
+		 FROM links.tags t
+		 JOIN links.link_tags lt ON t.id = lt.tag_id
 		 GROUP BY t.id, t.name
 		 ORDER BY count DESC`)
 	if err != nil {
@@ -215,7 +215,7 @@ func (s *LinkService) ListTags(ctx context.Context) ([]models.TagResponse, error
 
 func (s *LinkService) getTags(ctx context.Context, linkID uuid.UUID) ([]string, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT t.name FROM tags t JOIN link_tags lt ON t.id = lt.tag_id WHERE lt.link_id = $1`, linkID)
+		`SELECT t.name FROM links.tags t JOIN links.link_tags lt ON t.id = lt.tag_id WHERE lt.link_id = $1`, linkID)
 	if err != nil {
 		return nil, err
 	}
