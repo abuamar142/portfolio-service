@@ -12,8 +12,8 @@ CREATE SCHEMA IF NOT EXISTS links;
 ALTER TABLE public.quotes SET SCHEMA quotes;
 ALTER TABLE public.quote_tags SET SCHEMA quotes;
 ALTER TABLE public.tags SET SCHEMA quotes;
-ALTER SEQUENCE public.tags_id_seq SET SCHEMA quotes;
--- The serial default was stored as an unqualified name; rewrite it qualified.
+-- The owned sequence tags_id_seq follows its table automatically; the serial
+-- default was stored as an unqualified name, so rewrite it qualified.
 ALTER TABLE quotes.tags ALTER COLUMN id SET DEFAULT nextval('quotes.tags_id_seq');
 
 -- Link domain.

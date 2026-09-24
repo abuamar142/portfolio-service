@@ -7,7 +7,6 @@ ALTER TABLE links.link_tags DROP CONSTRAINT link_tags_tag_id_fkey;
 ALTER TABLE quotes.quotes SET SCHEMA public;
 ALTER TABLE quotes.quote_tags SET SCHEMA public;
 ALTER TABLE quotes.tags SET SCHEMA public;
-ALTER SEQUENCE quotes.tags_id_seq SET SCHEMA public;
 ALTER TABLE public.tags ALTER COLUMN id SET DEFAULT nextval('tags_id_seq');
 
 INSERT INTO public.tags (id, name)
