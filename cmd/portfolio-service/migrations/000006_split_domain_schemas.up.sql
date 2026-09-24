@@ -7,10 +7,12 @@ CREATE SCHEMA IF NOT EXISTS quotes;
 CREATE SCHEMA IF NOT EXISTS links;
 
 -- Quote domain: indexes + FK constraints follow their tables automatically.
-ALTER SEQUENCE public.tags_id_seq SET SCHEMA quotes;
+-- Move the owning TABLE first: an owned sequence may only be moved into the
+-- schema of its owning table.
 ALTER TABLE public.quotes SET SCHEMA quotes;
 ALTER TABLE public.quote_tags SET SCHEMA quotes;
 ALTER TABLE public.tags SET SCHEMA quotes;
+ALTER SEQUENCE public.tags_id_seq SET SCHEMA quotes;
 -- The serial default was stored as an unqualified name; rewrite it qualified.
 ALTER TABLE quotes.tags ALTER COLUMN id SET DEFAULT nextval('quotes.tags_id_seq');
 
