@@ -7,6 +7,7 @@ type Config struct {
 	DatabaseURL    string
 	JWTSecret      string
 	AuthServiceURL string
+	OwnerID        string
 }
 
 func Load() *Config {
@@ -15,6 +16,7 @@ func Load() *Config {
 		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		JWTSecret:      os.Getenv("JWT_SECRET"),
 		AuthServiceURL: getenv("AUTH_SERVICE_URL", "http://localhost:8080"),
+		OwnerID:        os.Getenv("OWNER_USER_ID"),
 	}
 }
 

@@ -16,10 +16,11 @@ import (
 
 type LinkHandler struct {
 	LinkService *services.LinkService
+	OwnerID     string
 }
 
-func NewLinkHandler(svc *services.LinkService) *LinkHandler {
-	return &LinkHandler{LinkService: svc}
+func NewLinkHandler(svc *services.LinkService, ownerID string) *LinkHandler {
+	return &LinkHandler{LinkService: svc, OwnerID: ownerID}
 }
 
 func validateLinkPayload(url, title, description string, tags []string) string {
@@ -119,6 +120,13 @@ func (h *LinkHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	if user == nil {
 		response.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "user not authenticated", "")
+		return
+	}
+
+	// The directory is owner-curated: create fails closed unless the caller
+	// matches OWNER_USER_ID (empty config denies everyone).
+	if h.OwnerID == "" || user.ID.String() != h.OwnerID {
+		response.Error(w, http.StatusForbidden, "OWNER_ONLY", "only the owner can create links", "")
 		return
 	}
 

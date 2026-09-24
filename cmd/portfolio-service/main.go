@@ -52,7 +52,7 @@ func main() {
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
-	linkH := handlers.NewLinkHandler(linkSvc)
+	linkH := handlers.NewLinkHandler(linkSvc, cfg.OwnerID)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
