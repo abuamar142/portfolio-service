@@ -32,7 +32,7 @@ INSERT INTO links.tags (id, name)
     ON CONFLICT (id) DO NOTHING;
 CREATE SEQUENCE links.tags_id_seq;
 ALTER TABLE links.tags ALTER COLUMN id SET DEFAULT nextval('links.tags_id_seq');
-SELECT setval('links.tags_id_seq', (SELECT COALESCE(MAX(id), 0) FROM links.tags));
+SELECT setval('links.tags_id_seq', (SELECT GREATEST(COALESCE(MAX(id), 0), 1) FROM links.tags));
 ALTER SEQUENCE links.tags_id_seq OWNED BY links.tags.id;
 
 -- link_tags.tag_id still referenced the original registry (now quotes.tags);
