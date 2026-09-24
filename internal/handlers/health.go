@@ -3,7 +3,7 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/abuamar142/quote-service/internal/response"
+	"github.com/abuamar142/portfolio-service/internal/response"
 )
 
 type HealthHandler struct{}

@@ -14,11 +14,11 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
-	"github.com/abuamar142/quote-service/internal/config"
-	"github.com/abuamar142/quote-service/internal/db"
-	"github.com/abuamar142/quote-service/internal/handlers"
-	"github.com/abuamar142/quote-service/internal/middleware"
-	"github.com/abuamar142/quote-service/internal/services"
+	"github.com/abuamar142/portfolio-service/internal/config"
+	"github.com/abuamar142/portfolio-service/internal/db"
+	"github.com/abuamar142/portfolio-service/internal/handlers"
+	"github.com/abuamar142/portfolio-service/internal/middleware"
+	"github.com/abuamar142/portfolio-service/internal/services"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -48,9 +48,11 @@ func main() {
 	log.Println("migrations applied successfully")
 
 	quoteSvc := services.NewQuoteService(pool)
+	linkSvc := services.NewLinkService(pool)
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
+	linkH := handlers.NewLinkHandler(linkSvc)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -67,6 +69,9 @@ func main() {
 		r.Get("/quotes", quoteH.List)
 		r.Get("/quotes/tags", quoteH.ListTags)
 		r.Get("/quotes/{id}", quoteH.GetByID)
+		r.Get("/links", linkH.List)
+		r.Get("/links/tags", linkH.ListTags)
+		r.Get("/links/{id}", linkH.GetByID)
 
 		// Auth-protected
 		r.Group(func(r chi.Router) {
@@ -74,6 +79,9 @@ func main() {
 			r.Post("/quotes", quoteH.Create)
 			r.Put("/quotes/{id}", quoteH.Update)
 			r.Delete("/quotes/{id}", quoteH.Delete)
+			r.Post("/links", linkH.Create)
+			r.Put("/links/{id}", linkH.Update)
+			r.Delete("/links/{id}", linkH.Delete)
 		})
 	})
 
@@ -87,7 +95,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("quote service starting on %s", addr)
+		log.Printf("portfolio service starting on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server failed: %v", err)
 		}
@@ -121,10 +129,11 @@ func runMigrations(databaseURL string) error {
 }
 
 var allowedOrigins = map[string]bool{
-	"https://abuamar.online":              true,
-	"https://dev.abuamar.online":           true,
-	"https://quote.abuamar.online":         true,
-	"http://localhost:5173":                true,
+	"https://abuamar.online":           true,
+	"https://dev.abuamar.online":       true,
+	"https://quote.abuamar.online":     true,
+	"https://portfolio.abuamar.online": true,
+	"http://localhost:5173":            true,
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

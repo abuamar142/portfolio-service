@@ -1,4 +1,4 @@
-module github.com/abuamar142/quote-service
+module github.com/abuamar142/portfolio-service
 
 go 1.25.0
 

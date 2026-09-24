@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/abuamar142/quote-service/internal/models"
-	"github.com/abuamar142/quote-service/internal/response"
+	"github.com/abuamar142/portfolio-service/internal/models"
+	"github.com/abuamar142/portfolio-service/internal/response"
 )
 
 type contextKey string

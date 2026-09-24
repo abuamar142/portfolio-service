@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/abuamar142/quote-service/internal/models"
+	"github.com/abuamar142/portfolio-service/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

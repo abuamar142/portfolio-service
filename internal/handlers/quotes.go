@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/abuamar142/quote-service/internal/middleware"
-	"github.com/abuamar142/quote-service/internal/models"
-	"github.com/abuamar142/quote-service/internal/response"
-	"github.com/abuamar142/quote-service/internal/services"
+	"github.com/abuamar142/portfolio-service/internal/middleware"
+	"github.com/abuamar142/portfolio-service/internal/models"
+	"github.com/abuamar142/portfolio-service/internal/response"
+	"github.com/abuamar142/portfolio-service/internal/services"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
