@@ -1,10 +1,13 @@
 services:
   db:
+    container_name: portfolio-service-db
     image: postgres:17-alpine
     restart: unless-stopped
     env_file: .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-quote-db}
+    ports:
+      - "127.0.0.1:25432:5432"
     volumes:
       - quote-pgdata:/var/lib/postgresql/data
     healthcheck:
