@@ -38,5 +38,9 @@ networks:
     external: true
 
 volumes:
+  # Dibuat manual di VPS (era quote-service) — label project-nya berbeda, jadi
+  # compose memperingati tiap deploy. external:true: compose tak memvalidasi
+  # label dan tak pernah menghapusnya saat project berganti nama.
   quote-pgdata:
+    external: true
     name: quote-pgdata
