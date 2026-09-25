@@ -1,9 +1,0 @@
-services:
-  db:
-    ports:
-      - "5435:5432"
-  app:
-    ports:
-      - "8084:8084"
-    environment:
-      AUTH_SERVICE_URL: http://host.docker.internal:8080

@@ -49,10 +49,12 @@ func main() {
 
 	quoteSvc := services.NewQuoteService(pool)
 	linkSvc := services.NewLinkService(pool)
+	snippetSvc := services.NewSnippetService(pool)
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
 	linkH := handlers.NewLinkHandler(linkSvc, cfg.OwnerID)
+	snippetH := handlers.NewSnippetHandler(snippetSvc, cfg.OwnerID)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -72,6 +74,10 @@ func main() {
 		r.Get("/links", linkH.List)
 		r.Get("/links/tags", linkH.ListTags)
 		r.Get("/links/{id}", linkH.GetByID)
+		r.Get("/snippets", snippetH.List)
+		r.Get("/snippets/tags", snippetH.ListTags)
+		r.Get("/snippets/languages", snippetH.ListLanguages)
+		r.Get("/snippets/{id}", snippetH.GetByID)
 
 		// Auth-protected
 		r.Group(func(r chi.Router) {
@@ -82,6 +88,9 @@ func main() {
 			r.Post("/links", linkH.Create)
 			r.Put("/links/{id}", linkH.Update)
 			r.Delete("/links/{id}", linkH.Delete)
+			r.Post("/snippets", snippetH.Create)
+			r.Put("/snippets/{id}", snippetH.Update)
+			r.Delete("/snippets/{id}", snippetH.Delete)
 		})
 	})
 
@@ -129,11 +138,12 @@ func runMigrations(databaseURL string) error {
 }
 
 var allowedOrigins = map[string]bool{
-	"https://abuamar.online":           true,
-	"https://dev.abuamar.online":       true,
-	"https://quote.abuamar.online":     true,
-	"https://portfolio.abuamar.online": true,
-	"http://localhost:5173":            true,
+	"https://abuamar.online":                    true,
+	"https://dev.abuamar.online":                true,
+	"https://quote.abuamar.online":              true,
+	"https://portfolio.abuamar.online":          true,
+	"https://portfolio-service-dev.abuamar.online": true,
+	"http://localhost:5173":                     true,
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

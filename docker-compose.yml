@@ -17,6 +17,7 @@ services:
       retries: 10
 
   app:
+    container_name: portfolio-service-app
     build: .
     restart: unless-stopped
     env_file: .env
