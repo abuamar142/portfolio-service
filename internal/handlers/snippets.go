@@ -71,7 +71,7 @@ func validateSnippetPayload(title, language, code string, tags []string) string 
 // @Router       /snippets [get]
 func (h *SnippetHandler) List(w http.ResponseWriter, r *http.Request) {
 	search := r.URL.Query().Get("search")
-	tag := r.URL.Query().Get("tag")
+	tags := splitTags(r.URL.Query().Get("tag"))
 	language := r.URL.Query().Get("language")
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -83,7 +83,7 @@ func (h *SnippetHandler) List(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 
-	result, err := h.SnippetService.List(r.Context(), search, tag, language, page, limit)
+	result, err := h.SnippetService.List(r.Context(), search, tags, language, page, limit)
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list snippets", err.Error())
 		return

@@ -18,15 +18,16 @@ func NewLinkService(pool *pgxpool.Pool) *LinkService {
 	return &LinkService{pool: pool}
 }
 
-func (s *LinkService) List(ctx context.Context, search, tag string, page, limit int) (*models.LinkListResponse, error) {
+func (s *LinkService) List(ctx context.Context, search string, tags []string, page, limit int) (*models.LinkListResponse, error) {
 	offset := (page - 1) * limit
+	hasTag := len(tags) > 0
 
 	// Count total
 	var countQuery string
 	var args []any
-	if tag != "" {
-		countQuery = `SELECT COUNT(DISTINCT lt.link_id) FROM links.link_tags lt JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = $1`
-		args = append(args, tag)
+	if hasTag {
+		countQuery = `SELECT COUNT(DISTINCT lt.link_id) FROM links.link_tags lt JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = ANY($1)`
+		args = append(args, tags)
 		if search != "" {
 			countQuery = `SELECT COUNT(DISTINCT l.id) FROM links.links l JOIN links.link_tags lt ON lt.link_id = l.id JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = $1 AND (l.title ILIKE '%' || $2 || '%' OR l.description ILIKE '%' || $2 || '%' OR l.url ILIKE '%' || $2 || '%')`
 			args = append(args, search)
@@ -48,14 +49,14 @@ func (s *LinkService) List(ctx context.Context, search, tag string, page, limit 
 	var queryArgs []any
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
 	paramIdx := 3
-	if tag != "" {
-		query += fmt.Sprintf(` WHERE l.id IN (SELECT DISTINCT lt.link_id FROM links.link_tags lt JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = $%d)`, paramIdx)
-		queryArgs = append(queryArgs, tag)
+	if hasTag {
+		query += fmt.Sprintf(` WHERE l.id IN (SELECT DISTINCT lt.link_id FROM links.link_tags lt JOIN links.tags t ON t.id = lt.tag_id WHERE t.name = ANY($%d))`, paramIdx)
+		queryArgs = append(queryArgs, tags)
 		paramIdx++
 	}
 	if search != "" {
 		searchCond := fmt.Sprintf(`(l.title ILIKE '%%' || $%[1]d || '%%' OR l.description ILIKE '%%' || $%[1]d || '%%' OR l.url ILIKE '%%' || $%[1]d || '%%')`, paramIdx)
-		if tag != "" {
+		if hasTag {
 			query += ` AND ` + searchCond
 		} else {
 			query += ` WHERE ` + searchCond

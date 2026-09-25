@@ -61,7 +61,7 @@ func validateLinkPayload(url, title, description string, tags []string) string {
 // @Router       /links [get]
 func (h *LinkHandler) List(w http.ResponseWriter, r *http.Request) {
 	search := r.URL.Query().Get("search")
-	tag := r.URL.Query().Get("tag")
+	tags := splitTags(r.URL.Query().Get("tag"))
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 
@@ -72,7 +72,7 @@ func (h *LinkHandler) List(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 
-	result, err := h.LinkService.List(r.Context(), search, tag, page, limit)
+	result, err := h.LinkService.List(r.Context(), search, tags, page, limit)
 	if err != nil {
 		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list links", err.Error())
 		return

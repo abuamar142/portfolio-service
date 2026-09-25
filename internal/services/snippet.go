@@ -18,30 +18,31 @@ func NewSnippetService(pool *pgxpool.Pool) *SnippetService {
 	return &SnippetService{pool: pool}
 }
 
-func (s *SnippetService) List(ctx context.Context, search, tag, language string, page, limit int) (*models.SnippetListResponse, error) {
+func (s *SnippetService) List(ctx context.Context, search string, tags []string, language string, page, limit int) (*models.SnippetListResponse, error) {
 	offset := (page - 1) * limit
+	hasTag := len(tags) > 0
 
-	// Count total
-	var countQuery string
+	// Count total — mirrors the WHERE clauses applied to the fetch below.
+	// The old five-branch switch ignored `search` whenever a tag was set, so
+	// ?tag=x&search=y reported the tag-only total; one shared condition list
+	// keeps count and rows in agreement for every combination.
 	var args []any
-	switch {
-	case tag != "" && language != "":
-		countQuery = `SELECT COUNT(DISTINCT sn.id) FROM snippets.snippets sn
-			JOIN snippets.snippet_tags st ON st.snippet_id = sn.id
-			JOIN snippets.tags t ON t.id = st.tag_id
-			WHERE t.name = $1 AND sn.language = $2`
-		args = append(args, tag, language)
-	case tag != "":
-		countQuery = `SELECT COUNT(DISTINCT st.snippet_id) FROM snippets.snippet_tags st JOIN snippets.tags t ON t.id = st.tag_id WHERE t.name = $1`
-		args = append(args, tag)
-	case language != "":
-		countQuery = `SELECT COUNT(*) FROM snippets.snippets sn WHERE sn.language = $1`
+	var countWhere []string
+	if hasTag {
+		args = append(args, tags)
+		countWhere = append(countWhere, fmt.Sprintf(`sn.id IN (SELECT DISTINCT st.snippet_id FROM snippets.snippet_tags st JOIN snippets.tags t ON t.id = st.tag_id WHERE t.name = ANY($%d))`, len(args)))
+	}
+	if language != "" {
 		args = append(args, language)
-	case search != "":
-		countQuery = `SELECT COUNT(*) FROM snippets.snippets sn WHERE sn.title ILIKE '%' || $1 || '%' OR sn.description ILIKE '%' || $1 || '%' OR sn.code ILIKE '%' || $1 || '%'`
+		countWhere = append(countWhere, fmt.Sprintf(`sn.language = $%d`, len(args)))
+	}
+	if search != "" {
 		args = append(args, search)
-	default:
-		countQuery = `SELECT COUNT(*) FROM snippets.snippets sn`
+		countWhere = append(countWhere, fmt.Sprintf(`(sn.title ILIKE '%%' || $%[1]d || '%%' OR sn.description ILIKE '%%' || $%[1]d || '%%' OR sn.code ILIKE '%%' || $%[1]d || '%%')`, len(args)))
+	}
+	countQuery := `SELECT COUNT(DISTINCT sn.id) FROM snippets.snippets sn`
+	if len(countWhere) > 0 {
+		countQuery += " WHERE " + strings.Join(countWhere, " AND ")
 	}
 
 	var total int
@@ -55,9 +56,9 @@ func (s *SnippetService) List(ctx context.Context, search, tag, language string,
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
 	paramIdx := 3
 	var where []string
-	if tag != "" {
-		where = append(where, fmt.Sprintf(`sn.id IN (SELECT DISTINCT st.snippet_id FROM snippets.snippet_tags st JOIN snippets.tags t ON t.id = st.tag_id WHERE t.name = $%d)`, paramIdx))
-		queryArgs = append(queryArgs, tag)
+	if hasTag {
+		where = append(where, fmt.Sprintf(`sn.id IN (SELECT DISTINCT st.snippet_id FROM snippets.snippet_tags st JOIN snippets.tags t ON t.id = st.tag_id WHERE t.name = ANY($%d))`, paramIdx))
+		queryArgs = append(queryArgs, tags)
 		paramIdx++
 	}
 	if language != "" {

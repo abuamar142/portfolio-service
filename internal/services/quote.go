@@ -18,15 +18,16 @@ func NewQuoteService(pool *pgxpool.Pool) *QuoteService {
 	return &QuoteService{pool: pool}
 }
 
-func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit int) (*models.QuoteListResponse, error) {
+func (s *QuoteService) List(ctx context.Context, search string, tags []string, page, limit int) (*models.QuoteListResponse, error) {
 	offset := (page - 1) * limit
+	hasTag := len(tags) > 0
 
 	// Count total
 	var countQuery string
 	var args []any
-	if tag != "" {
-		countQuery = `SELECT COUNT(DISTINCT qt.quote_id) FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = $1`
-		args = append(args, tag)
+	if hasTag {
+		countQuery = `SELECT COUNT(DISTINCT qt.quote_id) FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = ANY($1)`
+		args = append(args, tags)
 		if search != "" {
 			countQuery = `SELECT COUNT(DISTINCT q.id) FROM quotes.quotes q JOIN quotes.quote_tags qt ON qt.quote_id = q.id JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = $1 AND q.content ILIKE '%' || $2 || '%'`
 			args = append(args, search)
@@ -48,13 +49,13 @@ func (s *QuoteService) List(ctx context.Context, search, tag string, page, limit
 	var queryArgs []any
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
 	paramIdx := 3
-	if tag != "" {
-		query += fmt.Sprintf(` WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = $%d)`, paramIdx)
-		queryArgs = append(queryArgs, tag)
+	if hasTag {
+		query += fmt.Sprintf(` WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = ANY($%d))`, paramIdx)
+		queryArgs = append(queryArgs, tags)
 		paramIdx++
 	}
 	if search != "" {
-		if tag != "" {
+		if hasTag {
 			query += fmt.Sprintf(` AND q.content ILIKE '%%' || $%d || '%%'`, paramIdx)
 		} else {
 			query += fmt.Sprintf(` WHERE q.content ILIKE '%%' || $%d || '%%'`, paramIdx)
