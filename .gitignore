@@ -1,0 +1,7 @@
+# Runtime secrets — live only in /opt/portfolio-service/.env on the VPS.
+.env
+.env.*
+!.env.example
+
+# Build output
+portfolio-service
