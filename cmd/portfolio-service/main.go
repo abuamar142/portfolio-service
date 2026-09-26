@@ -18,6 +18,7 @@ import (
 	"github.com/abuamar142/portfolio-service/internal/db"
 	"github.com/abuamar142/portfolio-service/internal/handlers"
 	"github.com/abuamar142/portfolio-service/internal/middleware"
+	"github.com/abuamar142/portfolio-service/internal/notify"
 	"github.com/abuamar142/portfolio-service/internal/services"
 
 	"github.com/go-chi/chi/v5"
@@ -50,11 +51,13 @@ func main() {
 	quoteSvc := services.NewQuoteService(pool)
 	linkSvc := services.NewLinkService(pool)
 	snippetSvc := services.NewSnippetService(pool)
+	feedbackSvc := services.NewFeedbackService(pool)
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
 	linkH := handlers.NewLinkHandler(linkSvc, cfg.OwnerID)
 	snippetH := handlers.NewSnippetHandler(snippetSvc, cfg.OwnerID)
+	feedbackH := handlers.NewFeedbackHandler(feedbackSvc, cfg.OwnerID, notify.NewTelegram(cfg.TelegramBotToken, cfg.TelegramChatID))
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -78,6 +81,8 @@ func main() {
 		r.Get("/snippets/tags", snippetH.ListTags)
 		r.Get("/snippets/languages", snippetH.ListLanguages)
 		r.Get("/snippets/{id}", snippetH.GetByID)
+		// Public: visitors submit without an account (honeypot-guarded).
+		r.Post("/feedback", feedbackH.Create)
 
 		// Auth-protected
 		r.Group(func(r chi.Router) {
@@ -91,6 +96,9 @@ func main() {
 			r.Post("/snippets", snippetH.Create)
 			r.Put("/snippets/{id}", snippetH.Update)
 			r.Delete("/snippets/{id}", snippetH.Delete)
+			r.Get("/feedback", feedbackH.List)
+			r.Patch("/feedback/{id}", feedbackH.Update)
+			r.Delete("/feedback/{id}", feedbackH.Delete)
 		})
 	})
 
