@@ -7,6 +7,7 @@ import (
 
 	"github.com/abuamar142/portfolio-service/internal/models"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -72,7 +73,7 @@ func (s *QuoteService) List(ctx context.Context, search string, tags []string, p
 	}
 	defer rows.Close()
 
-	var quotes []models.Quote
+	quotes := []models.Quote{}
 	for rows.Next() {
 		var q models.Quote
 		if err := rows.Scan(&q.ID, &q.UserID, &q.Content, &q.AuthorName, &q.IsAnonymous, &q.Source, &q.Color, &q.CreatedAt, &q.UpdatedAt); err != nil {
@@ -171,14 +172,14 @@ func (s *QuoteService) replaceTags(ctx context.Context, quoteID uuid.UUID, tags 
 }
 
 func (s *QuoteService) Delete(ctx context.Context, userID, quoteID uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx,
+	result, err := s.pool.Exec(ctx,
 		`DELETE FROM quotes.quotes WHERE id = $1 AND user_id = $2`, quoteID, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("deleting quote: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("quote not found or not owned by user")
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
 	}
 	return nil
 }

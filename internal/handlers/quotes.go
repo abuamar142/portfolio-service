@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/abuamar142/portfolio-service/internal/services"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type QuoteHandler struct {
@@ -70,8 +72,12 @@ func (h *QuoteHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	quote, err := h.QuoteService.GetByID(r.Context(), id)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "quote not found", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get quote", err.Error())
 		return
 	}
 
@@ -126,7 +132,7 @@ func (h *QuoteHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update godoc
 // @Summary      Update a quote
-// @Description  Update an existing quote (owner only)
+// @Description  Update an existing quote (authenticated; own row only)
 // @Tags         quotes
 // @Accept       json
 // @Produce      json
@@ -166,8 +172,12 @@ func (h *QuoteHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	quote, err := h.QuoteService.Update(r.Context(), user.ID, quoteID, req)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "quote not found or not owned by user", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update quote", err.Error())
 		return
 	}
 
@@ -176,7 +186,7 @@ func (h *QuoteHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete godoc
 // @Summary      Delete a quote
-// @Description  Delete a quote (owner only)
+// @Description  Delete a quote (authenticated; own row only)
 // @Tags         quotes
 // @Produce      json
 // @Param        id path string true "Quote ID"
@@ -197,8 +207,11 @@ func (h *QuoteHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.QuoteService.Delete(r.Context(), user.ID, quoteID); err != nil {
+	if err := h.QuoteService.Delete(r.Context(), user.ID, quoteID); errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "quote not found or not owned by user", "")
+		return
+	} else if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete quote", err.Error())
 		return
 	}
 

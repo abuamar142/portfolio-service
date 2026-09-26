@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,15 +13,15 @@ import (
 	"github.com/abuamar142/portfolio-service/internal/services"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type LinkHandler struct {
 	LinkService *services.LinkService
-	OwnerID     string
 }
 
-func NewLinkHandler(svc *services.LinkService, ownerID string) *LinkHandler {
-	return &LinkHandler{LinkService: svc, OwnerID: ownerID}
+func NewLinkHandler(svc *services.LinkService) *LinkHandler {
+	return &LinkHandler{LinkService: svc}
 }
 
 func validateLinkPayload(url, title, description string, tags []string) string {
@@ -97,8 +98,12 @@ func (h *LinkHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link, err := h.LinkService.GetByID(r.Context(), id)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "link not found", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get link", err.Error())
 		return
 	}
 
@@ -120,13 +125,6 @@ func (h *LinkHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	if user == nil {
 		response.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "user not authenticated", "")
-		return
-	}
-
-	// The directory is owner-curated: create fails closed unless the caller
-	// matches OWNER_USER_ID (empty config denies everyone).
-	if h.OwnerID == "" || user.ID.String() != h.OwnerID {
-		response.Error(w, http.StatusForbidden, "OWNER_ONLY", "only the owner can create links", "")
 		return
 	}
 
@@ -152,7 +150,7 @@ func (h *LinkHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update godoc
 // @Summary      Update a link
-// @Description  Update an existing link (owner only)
+// @Description  Update an existing link (authenticated; own row only)
 // @Tags         links
 // @Accept       json
 // @Produce      json
@@ -188,8 +186,12 @@ func (h *LinkHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link, err := h.LinkService.Update(r.Context(), user.ID, linkID, req)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "link not found or not owned by user", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update link", err.Error())
 		return
 	}
 
@@ -198,7 +200,7 @@ func (h *LinkHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete godoc
 // @Summary      Delete a link
-// @Description  Delete a link (owner only)
+// @Description  Delete a link (authenticated; own row only)
 // @Tags         links
 // @Produce      json
 // @Param        id path string true "Link ID"
@@ -219,8 +221,11 @@ func (h *LinkHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.LinkService.Delete(r.Context(), user.ID, linkID); err != nil {
+	if err := h.LinkService.Delete(r.Context(), user.ID, linkID); errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "link not found or not owned by user", "")
+		return
+	} else if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete link", err.Error())
 		return
 	}
 

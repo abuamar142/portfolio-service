@@ -55,8 +55,8 @@ func main() {
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
-	linkH := handlers.NewLinkHandler(linkSvc, cfg.OwnerID)
-	snippetH := handlers.NewSnippetHandler(snippetSvc, cfg.OwnerID)
+	linkH := handlers.NewLinkHandler(linkSvc)
+	snippetH := handlers.NewSnippetHandler(snippetSvc)
 	feedbackH := handlers.NewFeedbackHandler(feedbackSvc, cfg.OwnerID, notify.NewTelegram(cfg.TelegramBotToken, cfg.TelegramChatID))
 
 	r := chi.NewRouter()
@@ -64,7 +64,6 @@ func main() {
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.RequestID)
-	r.Use(middleware.RequestID)
 	r.Use(corsMiddleware)
 
 	r.Get("/api/health", healthH.ServeHTTP)

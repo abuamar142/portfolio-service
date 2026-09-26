@@ -10,6 +10,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// feedbackListLimit bounds the inbox read: the dashboard renders a flat
+// list, so an unbounded SELECT would grow with every message ever sent.
+const feedbackListLimit = 200
+
 type FeedbackService struct {
 	pool *pgxpool.Pool
 }
@@ -48,9 +52,10 @@ func (s *FeedbackService) List(ctx context.Context, status string) (*models.Feed
 		return nil, fmt.Errorf("counting feedback: %w", err)
 	}
 
+	args = append(args, feedbackListLimit)
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, message, contact, page_url, status, created_at
-		 FROM feedback.feedback`+where+` ORDER BY created_at DESC, id DESC`, args...)
+		 FROM feedback.feedback`+where+fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, len(args)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing feedback: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/abuamar142/portfolio-service/internal/models"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -72,7 +73,7 @@ func (s *LinkService) List(ctx context.Context, search string, tags []string, pa
 	}
 	defer rows.Close()
 
-	var links []models.Link
+	links := []models.Link{}
 	for rows.Next() {
 		var l models.Link
 		if err := rows.Scan(&l.ID, &l.UserID, &l.URL, &l.Title, &l.Description, &l.CreatedAt, &l.UpdatedAt); err != nil {
@@ -175,7 +176,7 @@ func (s *LinkService) Delete(ctx context.Context, userID, linkID uuid.UUID) erro
 		return fmt.Errorf("deleting link: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("link not found or not owned by user")
+		return pgx.ErrNoRows
 	}
 	return nil
 }

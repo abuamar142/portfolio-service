@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,15 +13,15 @@ import (
 	"github.com/abuamar142/portfolio-service/internal/services"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type SnippetHandler struct {
 	SnippetService *services.SnippetService
-	OwnerID        string
 }
 
-func NewSnippetHandler(svc *services.SnippetService, ownerID string) *SnippetHandler {
-	return &SnippetHandler{SnippetService: svc, OwnerID: ownerID}
+func NewSnippetHandler(svc *services.SnippetService) *SnippetHandler {
+	return &SnippetHandler{SnippetService: svc}
 }
 
 // maxSnippetBytes caps stored code size. Code snippets are small; anything
@@ -108,8 +109,12 @@ func (h *SnippetHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snippet, err := h.SnippetService.GetByID(r.Context(), id)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "snippet not found", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get snippet", err.Error())
 		return
 	}
 
@@ -164,12 +169,6 @@ func (h *SnippetHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Owner-curated, like links: fails closed unless caller matches OWNER_USER_ID.
-	if h.OwnerID == "" || user.ID.String() != h.OwnerID {
-		response.Error(w, http.StatusForbidden, "OWNER_ONLY", "only the owner can create snippets", "")
-		return
-	}
-
 	var req models.CreateSnippetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, http.StatusBadRequest, "INVALID_JSON", "invalid request body", "")
@@ -192,7 +191,7 @@ func (h *SnippetHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update godoc
 // @Summary      Update a snippet
-// @Description  Update an existing snippet (owner only)
+// @Description  Update an existing snippet (authenticated; own row only)
 // @Tags         snippets
 // @Accept       json
 // @Produce      json
@@ -225,8 +224,12 @@ func (h *SnippetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snippet, err := h.SnippetService.Update(r.Context(), user.ID, snippetID, req)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "snippet not found or not owned by user", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update snippet", err.Error())
 		return
 	}
 
@@ -235,7 +238,7 @@ func (h *SnippetHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete godoc
 // @Summary      Delete a snippet
-// @Description  Delete an existing snippet (owner only)
+// @Description  Delete an existing snippet (authenticated; own row only)
 // @Tags         snippets
 // @Produce      json
 // @Param        id path string true "Snippet ID"
@@ -254,8 +257,11 @@ func (h *SnippetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.SnippetService.Delete(r.Context(), user.ID, snippetID); err != nil {
+	if err := h.SnippetService.Delete(r.Context(), user.ID, snippetID); errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "snippet not found or not owned by user", "")
+		return
+	} else if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete snippet", err.Error())
 		return
 	}
 

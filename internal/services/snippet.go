@@ -7,6 +7,7 @@ import (
 
 	"github.com/abuamar142/portfolio-service/internal/models"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -161,7 +162,7 @@ func (s *SnippetService) Delete(ctx context.Context, userID, snippetID uuid.UUID
 		return fmt.Errorf("deleting snippet: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("snippet not found or not owned by user")
+		return pgx.ErrNoRows
 	}
 	return nil
 }

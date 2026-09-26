@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/abuamar142/portfolio-service/internal/models"
 	"github.com/abuamar142/portfolio-service/internal/response"
@@ -51,7 +52,9 @@ func validateToken(authServiceURL, token string) (*models.AuthUser, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{}
+	// Bounded: a hung auth service must fail this request, not pin the
+	// goroutine and the caller's connection indefinitely.
+	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("calling auth service: %w", err)
