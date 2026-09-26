@@ -4,4 +4,6 @@
 !.env.example
 
 # Build output
-portfolio-service
+# Root-anchored: without the slash this would also swallow everything under
+# cmd/portfolio-service/ (untracked new files, e.g. migrations).
+/portfolio-service
