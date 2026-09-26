@@ -22,7 +22,6 @@ func (s *LinkService) List(ctx context.Context, search string, tags []string, pa
 	offset := (page - 1) * limit
 	hasTag := len(tags) > 0
 
-	// Count total
 	var countQuery string
 	var args []any
 	if hasTag {
@@ -44,7 +43,7 @@ func (s *LinkService) List(ctx context.Context, search string, tags []string, pa
 		return nil, fmt.Errorf("counting links: %w", err)
 	}
 
-	// Fetch links with search/tag filters (parameterised — no sprintf injection)
+	// parameterised — no sprintf injection
 	var query string
 	var queryArgs []any
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
@@ -117,13 +116,11 @@ func (s *LinkService) Create(ctx context.Context, userID uuid.UUID, req models.C
 		return nil, fmt.Errorf("creating link: %w", err)
 	}
 
-	// Insert tags
 	for _, tag := range req.Tags {
 		tag = strings.TrimSpace(strings.ToLower(tag))
 		if tag == "" {
 			continue
 		}
-		// Upsert tag to tags table
 		var tagID int
 		err := s.pool.QueryRow(ctx,
 			`INSERT INTO links.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
@@ -131,7 +128,6 @@ func (s *LinkService) Create(ctx context.Context, userID uuid.UUID, req models.C
 		if err != nil {
 			return nil, fmt.Errorf("upserting tag: %w", err)
 		}
-		// Insert link_tags
 		_, err = s.pool.Exec(ctx,
 			`INSERT INTO links.link_tags (link_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, l.ID, tagID,
 		)
@@ -155,14 +151,12 @@ func (s *LinkService) Update(ctx context.Context, userID, linkID uuid.UUID, req 
 		return nil, fmt.Errorf("updating link: %w", err)
 	}
 
-	// Replace tags
 	s.pool.Exec(ctx, `DELETE FROM links.link_tags WHERE link_id = $1`, linkID)
 	for _, tag := range req.Tags {
 		tag = strings.TrimSpace(strings.ToLower(tag))
 		if tag == "" {
 			continue
 		}
-		// Upsert tag
 		var tagID int
 		err := s.pool.QueryRow(ctx,
 			`INSERT INTO links.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
@@ -170,7 +164,6 @@ func (s *LinkService) Update(ctx context.Context, userID, linkID uuid.UUID, req 
 		if err != nil {
 			return nil, fmt.Errorf("upserting tag: %w", err)
 		}
-		// Insert link_tags
 		s.pool.Exec(ctx, `INSERT INTO links.link_tags (link_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, linkID, tagID)
 	}
 	l.Tags = req.Tags

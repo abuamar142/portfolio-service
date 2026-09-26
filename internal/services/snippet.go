@@ -50,7 +50,7 @@ func (s *SnippetService) List(ctx context.Context, search string, tags []string,
 		return nil, fmt.Errorf("counting snippets: %w", err)
 	}
 
-	// Fetch with filters (parameterised — no sprintf injection)
+	// parameterised — no sprintf injection
 	var query string
 	var queryArgs []any
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset

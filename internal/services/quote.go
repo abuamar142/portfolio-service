@@ -22,7 +22,6 @@ func (s *QuoteService) List(ctx context.Context, search string, tags []string, p
 	offset := (page - 1) * limit
 	hasTag := len(tags) > 0
 
-	// Count total
 	var countQuery string
 	var args []any
 	if hasTag {
@@ -44,7 +43,7 @@ func (s *QuoteService) List(ctx context.Context, search string, tags []string, p
 		return nil, fmt.Errorf("counting quotes: %w", err)
 	}
 
-	// Fetch quotes with search/tag filters (parameterised — no sprintf injection)
+	// parameterised — no sprintf injection
 	var query string
 	var queryArgs []any
 	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
@@ -119,13 +118,11 @@ func (s *QuoteService) Create(ctx context.Context, userID uuid.UUID, req models.
 		return nil, fmt.Errorf("creating quote: %w", err)
 	}
 
-	// Insert tags
 	for _, tag := range req.Tags {
 		tag = strings.TrimSpace(strings.ToLower(tag))
 		if tag == "" {
 			continue
 		}
-		// Upsert tag to tags table
 		var tagID int
 		err := s.pool.QueryRow(ctx,
 			`INSERT INTO quotes.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
@@ -133,7 +130,6 @@ func (s *QuoteService) Create(ctx context.Context, userID uuid.UUID, req models.
 		if err != nil {
 			return nil, fmt.Errorf("upserting tag: %w", err)
 		}
-		// Insert quote_tags
 		_, err = s.pool.Exec(ctx,
 			`INSERT INTO quotes.quote_tags (quote_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, q.ID, tagID,
 		)
@@ -157,14 +153,12 @@ func (s *QuoteService) Update(ctx context.Context, userID, quoteID uuid.UUID, re
 		return nil, fmt.Errorf("updating quote: %w", err)
 	}
 
-	// Replace tags
 	s.pool.Exec(ctx, `DELETE FROM quotes.quote_tags WHERE quote_id = $1`, quoteID)
 	for _, tag := range req.Tags {
 		tag = strings.TrimSpace(strings.ToLower(tag))
 		if tag == "" {
 			continue
 		}
-		// Upsert tag
 		var tagID int
 		err := s.pool.QueryRow(ctx,
 			`INSERT INTO quotes.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
@@ -172,7 +166,6 @@ func (s *QuoteService) Update(ctx context.Context, userID, quoteID uuid.UUID, re
 		if err != nil {
 			return nil, fmt.Errorf("upserting tag: %w", err)
 		}
-		// Insert quote_tags
 		s.pool.Exec(ctx, `INSERT INTO quotes.quote_tags (quote_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, quoteID, tagID)
 	}
 	q.Tags = req.Tags

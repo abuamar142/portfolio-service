@@ -70,7 +70,6 @@ func main() {
 	r.Get("/api/health", healthH.ServeHTTP)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		// Public
 		r.Get("/quotes", quoteH.List)
 		r.Get("/quotes/tags", quoteH.ListTags)
 		r.Get("/quotes/{id}", quoteH.GetByID)
@@ -87,7 +86,6 @@ func main() {
 		feedbackLimiter := middleware.RateLimit(middleware.NewRateLimiter(3, time.Minute))
 		r.With(feedbackLimiter).Post("/feedback", feedbackH.Create)
 
-		// Auth-protected
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.AuthServiceURL))
 			r.Post("/quotes", quoteH.Create)
