@@ -22,50 +22,49 @@ func (s *QuoteService) List(ctx context.Context, search string, tags []string, p
 	offset := (page - 1) * limit
 	hasTag := len(tags) > 0
 
-	var countQuery string
-	var args []any
+	// Count shares the condition list built the same way as the fetch below,
+	// so the total can never disagree with the rows for any tag/search mix.
+	// (The old four-branch switch bound a []string to `t.name = $1` and
+	// failed with an encode error whenever tag and search came together.)
+	var countArgs []any
+	var countWhere []string
 	if hasTag {
-		countQuery = `SELECT COUNT(DISTINCT qt.quote_id) FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = ANY($1)`
-		args = append(args, tags)
-		if search != "" {
-			countQuery = `SELECT COUNT(DISTINCT q.id) FROM quotes.quotes q JOIN quotes.quote_tags qt ON qt.quote_id = q.id JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = $1 AND q.content ILIKE '%' || $2 || '%'`
-			args = append(args, search)
-		}
-	} else if search != "" {
-		countQuery = `SELECT COUNT(*) FROM quotes.quotes q WHERE q.content ILIKE '%' || $1 || '%'`
-		args = append(args, search)
-	} else {
-		countQuery = `SELECT COUNT(*) FROM quotes.quotes q`
+		countArgs = append(countArgs, tags)
+		countWhere = append(countWhere, fmt.Sprintf(`q.id IN (SELECT DISTINCT qt.quote_id FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = ANY($%d))`, len(countArgs)))
+	}
+	if search != "" {
+		countArgs = append(countArgs, search)
+		countWhere = append(countWhere, fmt.Sprintf(`q.content ILIKE '%%' || $%[1]d || '%%'`, len(countArgs)))
+	}
+	countQuery := `SELECT COUNT(*) FROM quotes.quotes q`
+	if len(countWhere) > 0 {
+		countQuery += " WHERE " + strings.Join(countWhere, " AND ")
 	}
 
 	var total int
-	if err := s.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, fmt.Errorf("counting quotes: %w", err)
 	}
 
 	// parameterised — no sprintf injection
-	var query string
-	var queryArgs []any
-	queryArgs = append(queryArgs, limit, offset) // $1 = limit, $2 = offset
-	paramIdx := 3
+	queryArgs := []any{limit, offset} // $1 = limit, $2 = offset
+	var where []string
 	if hasTag {
-		query += fmt.Sprintf(` WHERE q.id IN (SELECT DISTINCT qt.quote_id FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = ANY($%d))`, paramIdx)
 		queryArgs = append(queryArgs, tags)
-		paramIdx++
+		where = append(where, fmt.Sprintf(`q.id IN (SELECT DISTINCT qt.quote_id FROM quotes.quote_tags qt JOIN quotes.tags t ON t.id = qt.tag_id WHERE t.name = ANY($%d))`, len(queryArgs)))
 	}
 	if search != "" {
-		if hasTag {
-			query += fmt.Sprintf(` AND q.content ILIKE '%%' || $%d || '%%'`, paramIdx)
-		} else {
-			query += fmt.Sprintf(` WHERE q.content ILIKE '%%' || $%d || '%%'`, paramIdx)
-		}
 		queryArgs = append(queryArgs, search)
-		paramIdx++
+		where = append(where, fmt.Sprintf(`q.content ILIKE '%%' || $%[1]d || '%%'`, len(queryArgs)))
 	}
-	query = fmt.Sprintf(`
+	fetchWhere := ""
+	if len(where) > 0 {
+		fetchWhere = " WHERE " + strings.Join(where, " AND ")
+	}
+	query := fmt.Sprintf(`
 		SELECT q.id, q.user_id, q.content, q.author_name, q.is_anonymous, q.source, q.color, q.created_at, q.updated_at
 		FROM quotes.quotes q%s
-		ORDER BY random() LIMIT $1 OFFSET $2`, query)
+		ORDER BY random() LIMIT $1 OFFSET $2`, fetchWhere)
 
 	rows, err := s.pool.Query(ctx, query, queryArgs...)
 	if err != nil {
@@ -118,26 +117,10 @@ func (s *QuoteService) Create(ctx context.Context, userID uuid.UUID, req models.
 		return nil, fmt.Errorf("creating quote: %w", err)
 	}
 
-	for _, tag := range req.Tags {
-		tag = strings.TrimSpace(strings.ToLower(tag))
-		if tag == "" {
-			continue
-		}
-		var tagID int
-		err := s.pool.QueryRow(ctx,
-			`INSERT INTO quotes.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
-		).Scan(&tagID)
-		if err != nil {
-			return nil, fmt.Errorf("upserting tag: %w", err)
-		}
-		_, err = s.pool.Exec(ctx,
-			`INSERT INTO quotes.quote_tags (quote_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, q.ID, tagID,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("inserting quote_tag: %w", err)
-		}
+	if err := s.replaceTags(ctx, q.ID, req.Tags); err != nil {
+		return nil, err
 	}
-	q.Tags = req.Tags
+	q.Tags, _ = s.getTags(ctx, q.ID)
 	return &q, nil
 }
 
@@ -153,23 +136,38 @@ func (s *QuoteService) Update(ctx context.Context, userID, quoteID uuid.UUID, re
 		return nil, fmt.Errorf("updating quote: %w", err)
 	}
 
-	s.pool.Exec(ctx, `DELETE FROM quotes.quote_tags WHERE quote_id = $1`, quoteID)
-	for _, tag := range req.Tags {
+	if err := s.replaceTags(ctx, quoteID, req.Tags); err != nil {
+		return nil, err
+	}
+	q.Tags, _ = s.getTags(ctx, q.ID)
+	return &q, nil
+}
+
+// replaceTags rewrites the quote's tag associations. Every error bubbles up:
+// a swallowed failure here leaves stale junction rows behind the owner's
+// back. Mirrors SnippetService.replaceTags (per-domain tables, same shape).
+func (s *QuoteService) replaceTags(ctx context.Context, quoteID uuid.UUID, tags []string) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM quotes.quote_tags WHERE quote_id = $1`, quoteID); err != nil {
+		return fmt.Errorf("clearing quote tags: %w", err)
+	}
+	for _, tag := range tags {
 		tag = strings.TrimSpace(strings.ToLower(tag))
 		if tag == "" {
 			continue
 		}
 		var tagID int
-		err := s.pool.QueryRow(ctx,
+		if err := s.pool.QueryRow(ctx,
 			`INSERT INTO quotes.tags (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`, tag,
-		).Scan(&tagID)
-		if err != nil {
-			return nil, fmt.Errorf("upserting tag: %w", err)
+		).Scan(&tagID); err != nil {
+			return fmt.Errorf("upserting tag: %w", err)
 		}
-		s.pool.Exec(ctx, `INSERT INTO quotes.quote_tags (quote_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, quoteID, tagID)
+		if _, err := s.pool.Exec(ctx,
+			`INSERT INTO quotes.quote_tags (quote_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, quoteID, tagID,
+		); err != nil {
+			return fmt.Errorf("inserting quote_tag: %w", err)
+		}
 	}
-	q.Tags = req.Tags
-	return &q, nil
+	return nil
 }
 
 func (s *QuoteService) Delete(ctx context.Context, userID, quoteID uuid.UUID) error {
