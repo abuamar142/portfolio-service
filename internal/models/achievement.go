@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -102,4 +103,47 @@ func ParseNullableDate(s *string) (*CustomDate, error) {
 		return nil, err
 	}
 	return &d, nil
+}
+
+// pgEpoch is PostgreSQL's binary DATE epoch (days since2000-01-01).
+var pgEpoch = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// Scan implements sql.Scanner (and pgtype's twin interface) so DATE columns
+// load without a cast: pgx may hand us text ("YYYY-MM-DD"), the binary day
+// count since2000-01-01, a time.Time, or plain int days.
+func (d *CustomDate) Scan(src any) error {
+	if src == nil {
+		*d = CustomDate{}
+		return nil
+	}
+	switch v := src.(type) {
+	case time.Time:
+		*d = CustomDate(v)
+		return nil
+	case string:
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			return fmt.Errorf("date must be YYYY-MM-DD: %w", err)
+		}
+		*d = CustomDate(t)
+		return nil
+	case []byte:
+		if len(v) == 4 { // binary DATE: int32 days since the PG epoch, big-endian
+			*d = CustomDate(pgEpoch.AddDate(0, 0, int(int32(binary.BigEndian.Uint32(v)))))
+			return nil
+		}
+		t, err := time.Parse("2006-01-02", string(v))
+		if err != nil {
+			return fmt.Errorf("date must be YYYY-MM-DD: %w", err)
+		}
+		*d = CustomDate(t)
+		return nil
+	case int32:
+		*d = CustomDate(pgEpoch.AddDate(0, 0, int(v)))
+		return nil
+	case int64:
+		*d = CustomDate(pgEpoch.AddDate(0, 0, int(v)))
+		return nil
+	}
+	return fmt.Errorf("cannot scan %T into CustomDate", src)
 }
