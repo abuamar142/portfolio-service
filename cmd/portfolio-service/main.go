@@ -52,12 +52,14 @@ func main() {
 	linkSvc := services.NewLinkService(pool)
 	snippetSvc := services.NewSnippetService(pool)
 	feedbackSvc := services.NewFeedbackService(pool)
+	achievementSvc := services.NewAchievementService(pool)
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
 	linkH := handlers.NewLinkHandler(linkSvc)
 	snippetH := handlers.NewSnippetHandler(snippetSvc)
 	feedbackH := handlers.NewFeedbackHandler(feedbackSvc, cfg.OwnerID, notify.NewTelegram(cfg.TelegramBotToken, cfg.TelegramChatID))
+	achievementH := handlers.NewAchievementHandler(achievementSvc, cfg.OwnerID)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -85,6 +87,8 @@ func main() {
 		feedbackLimiter := middleware.RateLimit(middleware.NewRateLimiter(3, time.Minute))
 		r.With(feedbackLimiter).Post("/feedback", feedbackH.Create)
 
+		r.Get("/achievements", achievementH.List)
+
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.AuthServiceURL))
 			r.Post("/quotes", quoteH.Create)
@@ -99,6 +103,10 @@ func main() {
 			r.Get("/feedback", feedbackH.List)
 			r.Patch("/feedback/{id}", feedbackH.Update)
 			r.Delete("/feedback/{id}", feedbackH.Delete)
+
+			r.Post("/achievements", achievementH.Create)
+			r.Put("/achievements/{id}", achievementH.Update)
+			r.Delete("/achievements/{id}", achievementH.Delete)
 		})
 	})
 
