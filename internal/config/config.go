@@ -11,6 +11,11 @@ type Config struct {
 	// (feedback inbox). Either empty → notifications disabled.
 	TelegramBotToken string
 	TelegramChatID   string
+	// R2 credentials for uploading achievement certificates.
+	// All three must be set for file uploads to work.
+	R2APIToken  string
+	R2AccountID string
+	R2Bucket    string
 }
 
 func Load() *Config {
@@ -21,6 +26,9 @@ func Load() *Config {
 		OwnerID:          os.Getenv("OWNER_USER_ID"),
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramChatID:   os.Getenv("TELEGRAM_CHAT_ID"),
+		R2APIToken:       os.Getenv("R2_API_TOKEN"),
+		R2AccountID:      os.Getenv("R2_ACCOUNT_ID"),
+		R2Bucket:         os.Getenv("R2_BUCKET"),
 	}
 }
 

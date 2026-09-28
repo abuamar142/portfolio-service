@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -225,4 +226,85 @@ func (h *AchievementHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.JSON(w, http.StatusOK, "achievement deleted", nil)
+}
+
+// UploadFile godoc
+// @Summary      Upload a certificate file (owner only)
+// @Description  Upload a certificate file for an achievement to R2 storage
+// @Tags         achievements
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        id path string true "Achievement ID"
+// @Param        file formData file true "Certificate file (PDF, PNG, JPEG, WebP; max 10 MB)"
+// @Success      200 {object} models.Achievement
+// @Failure      400 {object} response.Response
+// @Failure      401 {object} response.Response
+// @Failure      403 {object} response.Response
+// @Failure      404 {object} response.Response
+// @Failure      503 {object} response.Response
+// @Router       /achievements/{id}/file [post]
+func (h *AchievementHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
+	if !h.ownerOnly(w, r, "upload file") {
+		return
+	}
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "INVALID_ID", "invalid achievement ID", "")
+		return
+	}
+
+	// Limit body to 10 MB + 1 byte to detect over-limit.
+	const maxBytes = 10<<20 + 1
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		response.Error(w, http.StatusBadRequest, "MISSING_CONTENT_TYPE", "Content-Type header is required", "")
+		return
+	}
+
+	// Extract media type (strip params like charset).
+	mediaType := contentType
+	if idx := strings.IndexByte(contentType, ';'); idx != -1 {
+		mediaType = strings.TrimSpace(contentType[:idx])
+	}
+
+	allowed := map[string]bool{
+		"application/pdf": true,
+		"image/png":       true,
+		"image/jpeg":      true,
+		"image/webp":      true,
+	}
+	if !allowed[mediaType] {
+		response.Error(w, http.StatusBadRequest, "UNSUPPORTED_MEDIA_TYPE",
+			"content type must be one of: application/pdf, image/png, image/jpeg, image/webp", "")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if err.Error() == "http: request body too large" {
+			response.Error(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "file must be 10 MB or smaller", "")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to read request body", err.Error())
+		return
+	}
+	if int64(len(body)) > 10<<20 {
+		response.Error(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "file must be 10 MB or smaller", "")
+		return
+	}
+
+	a, err := h.AchievementService.UploadFile(r.Context(), id, mediaType, body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		response.Error(w, http.StatusNotFound, "NOT_FOUND", "achievement not found", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to upload file", err.Error())
+		return
+	}
+
+	response.JSON(w, http.StatusOK, "file uploaded", a)
 }

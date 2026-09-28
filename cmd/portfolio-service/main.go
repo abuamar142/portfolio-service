@@ -52,7 +52,7 @@ func main() {
 	linkSvc := services.NewLinkService(pool)
 	snippetSvc := services.NewSnippetService(pool)
 	feedbackSvc := services.NewFeedbackService(pool)
-	achievementSvc := services.NewAchievementService(pool)
+	achievementSvc := services.NewAchievementService(pool, cfg.R2APIToken, cfg.R2AccountID, cfg.R2Bucket)
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
@@ -107,6 +107,7 @@ func main() {
 			r.Post("/achievements", achievementH.Create)
 			r.Put("/achievements/{id}", achievementH.Update)
 			r.Delete("/achievements/{id}", achievementH.Delete)
+			r.Post("/achievements/{id}/file", achievementH.UploadFile)
 		})
 	})
 

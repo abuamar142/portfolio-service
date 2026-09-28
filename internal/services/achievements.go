@@ -1,8 +1,13 @@
 package services
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/abuamar142/portfolio-service/internal/models"
@@ -12,11 +17,19 @@ import (
 )
 
 type AchievementService struct {
-	pool *pgxpool.Pool
+	pool        *pgxpool.Pool
+	r2APIToken  string
+	r2AccountID string
+	r2Bucket    string
 }
 
-func NewAchievementService(pool *pgxpool.Pool) *AchievementService {
-	return &AchievementService{pool: pool}
+func NewAchievementService(pool *pgxpool.Pool, r2Token, r2Account, r2Bucket string) *AchievementService {
+	return &AchievementService{
+		pool:        pool,
+		r2APIToken:  r2Token,
+		r2AccountID: r2Account,
+		r2Bucket:    r2Bucket,
+	}
 }
 
 func (s *AchievementService) Create(ctx context.Context, req models.CreateAchievementRequest) (*models.Achievement, error) {
@@ -127,6 +140,117 @@ func (s *AchievementService) Delete(ctx context.Context, id uuid.UUID) error {
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+// UploadFile uploads a certificate file to Cloudflare R2 and updates the
+// achievement's file_key. If the achievement already has a different file_key,
+// the old object is deleted on a best-effort basis.
+func (s *AchievementService) UploadFile(ctx context.Context, id uuid.UUID, contentType string, body []byte) (*models.Achievement, error) {
+	// Validate content type.
+	ext, ok := contentTypeToExt[contentType]
+	if !ok {
+		return nil, fmt.Errorf("unsupported content type: %s", contentType)
+	}
+	// Enforce 10 MB limit (body already limited by caller).
+	const maxBytes = 10 << 20
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("file too large: %d bytes (max %d)", len(body), maxBytes)
+	}
+	if s.r2APIToken == "" || s.r2AccountID == "" || s.r2Bucket == "" {
+		return nil, fmt.Errorf("R2 storage not configured")
+	}
+
+	// Fetch current achievement to check existing file_key.
+	var oldFileKey string
+	err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(file_key, '') FROM achievements.achievements WHERE id = $1`, id,
+	).Scan(&oldFileKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, pgx.ErrNoRows
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetching achievement: %w", err)
+	}
+
+	// Build object key: certificates/{id}/{id}.{ext}
+	objectKey := fmt.Sprintf("certificates/%s/%s.%s", id.String(), id.String(), ext)
+
+	// Upload to R2 via Cloudflare API (PUT).
+	uploadURL := fmt.Sprintf(
+		"https://api.cloudflare.com/client/v4/accounts/%s/r2/buckets/%s/objects/%s",
+		s.r2AccountID, s.r2Bucket, objectKey,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.r2APIToken)
+	req.Header.Set("Content-Type", contentType)
+
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("uploading to R2: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var cfErr struct {
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&cfErr)
+		detail := resp.Status
+		if len(cfErr.Errors) > 0 {
+			detail = cfErr.Errors[0].Message
+		}
+		return nil, fmt.Errorf("R2 upload failed (%s): %s", resp.Status, detail)
+	}
+
+	// Delete old object if it differs (best-effort).
+	if oldFileKey != "" && oldFileKey != objectKey {
+		go func(key string) {
+			delURL := fmt.Sprintf(
+				"https://api.cloudflare.com/client/v4/accounts/%s/r2/buckets/%s/objects/%s",
+				s.r2AccountID, s.r2Bucket, key,
+			)
+			delReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL, nil)
+			delReq.Header.Set("Authorization", "Bearer "+s.r2APIToken)
+			delClient := &http.Client{Timeout: 30 * time.Second}
+			delResp, err := delClient.Do(delReq)
+			if err == nil {
+				delResp.Body.Close()
+			}
+		}(oldFileKey)
+	}
+
+	// Update file_key in database.
+	var a models.Achievement
+	err = s.pool.QueryRow(ctx,
+		`UPDATE achievements.achievements
+		 SET file_key = $2, updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING id, title, organizer, date, type, drive_file_id, file_key,
+		           certificate_number, participant_as, description, valid_until,
+		           order_index, created_at`,
+		id, objectKey,
+	).Scan(&a.ID, &a.Title, &a.Organizer, &a.Date, &a.Type, &a.DriveFileID,
+		&a.FileKey, &a.CertificateNumber, &a.ParticipantAs, &a.Description,
+		&a.ValidUntil, &a.OrderIndex, &a.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("updating file_key: %w", err)
+	}
+	return &a, nil
+}
+
+// contentTypeToExt maps allowed content types to file extensions.
+var contentTypeToExt = map[string]string{
+	"application/pdf": "pdf",
+	"image/png":       "png",
+	"image/jpeg":      "jpg",
+	"image/webp":      "webp",
 }
 
 // nullableTime converts a *CustomDate to *time.Time for pgx scanning.
