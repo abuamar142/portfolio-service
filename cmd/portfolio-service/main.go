@@ -53,6 +53,7 @@ func main() {
 	snippetSvc := services.NewSnippetService(pool)
 	feedbackSvc := services.NewFeedbackService(pool)
 	achievementSvc := services.NewAchievementService(pool, cfg.R2APIToken, cfg.R2AccountID, cfg.R2Bucket)
+	profileSvc := services.NewProfileService(pool)
 
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
@@ -60,6 +61,7 @@ func main() {
 	snippetH := handlers.NewSnippetHandler(snippetSvc)
 	feedbackH := handlers.NewFeedbackHandler(feedbackSvc, cfg.OwnerID, notify.NewTelegram(cfg.TelegramBotToken, cfg.TelegramChatID))
 	achievementH := handlers.NewAchievementHandler(achievementSvc, cfg.OwnerID)
+	profileH := handlers.NewProfileHandler(profileSvc)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -88,6 +90,9 @@ func main() {
 		r.With(feedbackLimiter).Post("/feedback", feedbackH.Create)
 
 		r.Get("/achievements", achievementH.List)
+		// Profile: the identity block and the four ordered lists that replaced
+		// the Payload CMS. Public — the homepage renders it for every visitor.
+		r.Get("/profile", profileH.Get)
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(cfg.AuthServiceURL))
