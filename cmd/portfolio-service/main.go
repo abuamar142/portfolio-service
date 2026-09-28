@@ -108,6 +108,7 @@ func main() {
 			r.Put("/achievements/{id}", achievementH.Update)
 			r.Delete("/achievements/{id}", achievementH.Delete)
 			r.Post("/achievements/{id}/file", achievementH.UploadFile)
+			r.Delete("/achievements/{id}/file", achievementH.DeleteFile)
 		})
 	})
 
@@ -170,7 +171,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, X-File-Name")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 		if r.Method == http.MethodOptions {

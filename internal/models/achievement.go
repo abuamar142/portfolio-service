@@ -18,8 +18,9 @@ type Achievement struct {
 	Organizer         string     `json:"organizer"`
 	Date              CustomDate `json:"date"`
 	Type              string     `json:"type"`
-	DriveFileID       string     `json:"drive_file_id"`
 	FileKey           string     `json:"file_key"`
+	FileName          *string    `json:"file_name"`
+	FileSize          *int64     `json:"file_size"`
 	CertificateNumber string     `json:"certificate_number"`
 	ParticipantAs     string     `json:"participant_as"`
 	Description       string     `json:"description"`
@@ -33,7 +34,6 @@ type CreateAchievementRequest struct {
 	Organizer         string  `json:"organizer"`
 	Date              string  `json:"date"`
 	Type              string  `json:"type"`
-	DriveFileID       string  `json:"drive_file_id"`
 	CertificateNumber string  `json:"certificate_number"`
 	ParticipantAs     string  `json:"participant_as"`
 	Description       string  `json:"description"`
@@ -46,7 +46,6 @@ type UpdateAchievementRequest struct {
 	Organizer         string  `json:"organizer"`
 	Date              string  `json:"date"`
 	Type              string  `json:"type"`
-	DriveFileID       string  `json:"drive_file_id"`
 	CertificateNumber string  `json:"certificate_number"`
 	ParticipantAs     string  `json:"participant_as"`
 	Description       string  `json:"description"`

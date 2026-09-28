@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/abuamar142/portfolio-service/internal/middleware"
@@ -118,7 +120,6 @@ func (h *AchievementHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.Organizer = strings.TrimSpace(req.Organizer)
 	req.Date = strings.TrimSpace(req.Date)
 	req.Type = strings.TrimSpace(req.Type)
-	req.DriveFileID = strings.TrimSpace(req.DriveFileID)
 	req.CertificateNumber = strings.TrimSpace(req.CertificateNumber)
 	req.ParticipantAs = strings.TrimSpace(req.ParticipantAs)
 	req.Description = strings.TrimSpace(req.Description)
@@ -171,7 +172,6 @@ func (h *AchievementHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.Organizer = strings.TrimSpace(req.Organizer)
 	req.Date = strings.TrimSpace(req.Date)
 	req.Type = strings.TrimSpace(req.Type)
-	req.DriveFileID = strings.TrimSpace(req.DriveFileID)
 	req.CertificateNumber = strings.TrimSpace(req.CertificateNumber)
 	req.ParticipantAs = strings.TrimSpace(req.ParticipantAs)
 	req.Description = strings.TrimSpace(req.Description)
@@ -296,7 +296,34 @@ func (h *AchievementHandler) UploadFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	a, err := h.AchievementService.UploadFile(r.Context(), id, mediaType, body)
+	// Read and sanitize X-File-Name header.
+	var fileName *string
+	if rawName := r.Header.Get("X-File-Name"); rawName != "" {
+		decoded, dErr := url.QueryUnescape(rawName)
+		if dErr == nil {
+			rawName = decoded
+		}
+		base := filepath.Base(rawName)
+		if base == "." || base == "/" {
+			base = ""
+		}
+		// Strip control characters.
+		base = strings.Map(func(r rune) rune {
+			if r < 32 || r == 127 {
+				return -1
+			}
+			return r
+		}, base)
+		if len(base) > 255 {
+			base = base[:255]
+		}
+		if base != "" {
+			fileName = &base
+		}
+	}
+	fileSize := int64(len(body))
+
+	a, err := h.AchievementService.UploadFile(r.Context(), id, mediaType, body, fileName, fileSize)
 	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "achievement not found", "")
 		return
@@ -307,4 +334,40 @@ func (h *AchievementHandler) UploadFile(w http.ResponseWriter, r *http.Request) 
 	}
 
 	response.JSON(w, http.StatusOK, "file uploaded", a)
+}
+
+// DeleteFile godoc
+// @Summary      Delete a certificate file (owner only)
+// @Description  Remove the certificate file from an achievement
+// @Tags         achievements
+// @Produce      json
+// @Param        id path string true "Achievement ID"
+// @Success      200 {object} models.Achievement
+// @Failure      400 {object} response.Response
+// @Failure      401 {object} response.Response
+// @Failure      403 {object} response.Response
+// @Failure      404 {object} response.Response
+// @Router       /achievements/{id}/file [delete]
+func (h *AchievementHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
+	if !h.ownerOnly(w, r, "delete file") {
+		return
+	}
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		response.Error(w, http.StatusBadRequest, "INVALID_ID", "invalid achievement ID", "")
+		return
+	}
+
+	a, err := h.AchievementService.DeleteFile(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		response.Error(w, http.StatusNotFound, "NOT_FOUND", "achievement not found", "")
+		return
+	}
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete file", err.Error())
+		return
+	}
+
+	response.JSON(w, http.StatusOK, "file deleted", a)
 }
