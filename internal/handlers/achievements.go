@@ -19,10 +19,11 @@ import (
 )
 
 var validAchievementTypes = map[string]bool{
-	"certificate":    true,
-	"certification":  true,
-	"webinar":        true,
-	"seminar":        true,
+	"certificate":   true,
+	"certification": true,
+	"webinar":       true,
+	"seminar":       true,
+	"contribution":  true,
 }
 
 type AchievementHandler struct {
@@ -48,7 +49,7 @@ func validateAchievementPayload(title, date, typ, organizer, certificateNumber, 
 		return "date must be YYYY-MM-DD"
 	}
 	if !validAchievementTypes[typ] {
-		return "type must be one of: certificate, certification, webinar, seminar"
+		return "type must be one of: certificate, certification, webinar, seminar, contribution"
 	}
 	if len(organizer) > 255 {
 		return "organizer too long, max 255 characters"
