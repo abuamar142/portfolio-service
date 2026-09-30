@@ -1,13 +1,10 @@
 package services
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
 	"time"
 
 	"github.com/abuamar142/portfolio-service/internal/models"
@@ -16,20 +13,33 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type AchievementService struct {
-	pool        *pgxpool.Pool
-	r2APIToken  string
-	r2AccountID string
-	r2Bucket    string
+// fileStore is the row access the file paths need: read the current key, write
+// the new one. A narrow interface rather than the pool so the ordering rules
+// can be tested without a database — the interesting failure is "the row write
+// failed after the upload succeeded", which is impossible to provoke against a
+// real pool. *pgxpool-backed achievementStore satisfies it.
+type fileStore interface {
+	// currentFileKey returns the key the achievement points at, or "".
+	// pgx.ErrNoRows when the achievement does not exist.
+	currentFileKey(ctx context.Context, id uuid.UUID) (string, error)
+	// setFileMetadata writes the file columns; an empty key clears them.
+	setFileMetadata(ctx context.Context, id uuid.UUID, key string, fileName *string, fileSize int64) (*models.Achievement, error)
 }
 
-func NewAchievementService(pool *pgxpool.Pool, r2Token, r2Account, r2Bucket string) *AchievementService {
-	return &AchievementService{
-		pool:        pool,
-		r2APIToken:  r2Token,
-		r2AccountID: r2Account,
-		r2Bucket:    r2Bucket,
-	}
+type AchievementService struct {
+	pool *pgxpool.Pool
+	// media owns the R2 credentials and the portfolio-assets bucket. This
+	// service holds no storage credential at all.
+	media *MediaClient
+	// store is the row access the file paths use. Defaults to this service's
+	// own pool-backed implementation; a test substitutes a fake.
+	store fileStore
+}
+
+func NewAchievementService(pool *pgxpool.Pool, media *MediaClient) *AchievementService {
+	s := &AchievementService{pool: pool, media: media}
+	s.store = &pgAchievementStore{pool: pool}
+	return s
 }
 
 func (s *AchievementService) Create(ctx context.Context, req models.CreateAchievementRequest) (*models.Achievement, error) {
@@ -148,29 +158,40 @@ func (s *AchievementService) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// UploadFile uploads a certificate file to Cloudflare R2 and updates the
-// achievement's file metadata. If the achievement already has a different
-// file_key, the old object is deleted on a best-effort basis.
-func (s *AchievementService) UploadFile(ctx context.Context, id uuid.UUID, contentType string, body []byte, fileName *string, fileSize int64) (*models.Achievement, error) {
-	// Validate content type.
-	ext, ok := contentTypeToExt[contentType]
-	if !ok {
+// UploadFile stores a certificate file via media-service and records its key
+// on the achievement.
+//
+// The ordering is deliberate, and it matches the other callers of
+// media-service:
+//
+//  1. Validate the type and read the current row first, so a request that can
+//     never succeed fails before anything is uploaded — a rejected request
+//     must not leave an orphan in the bucket.
+//  2. Upload, which returns the new key.
+//  3. Write the key to the row.
+//  4. Only then remove the object it replaced.
+//
+// Reversing 3 and 4 would leave the row pointing at a file that no longer
+// exists if the write failed. If step 3 fails after a successful upload, the
+// new object is removed instead of being left as an orphan.
+//
+// The key is stored, not the URL: the dashboard builds the link itself from
+// FILES_URL and the key. Storing the URL would double the prefix.
+func (s *AchievementService) UploadFile(ctx context.Context, token string, id uuid.UUID, contentType string, body []byte, fileName *string, fileSize int64) (*models.Achievement, error) {
+	// The type is checked here as well as by media-service, which sniffs the
+	// bytes. This check gives the dashboard its specific message ("content
+	// type must be one of: …") for a type we never accept, before a body is
+	// read; media-service is still the authority on what is actually stored.
+	if _, ok := contentTypeToExt[contentType]; !ok {
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
-	// Enforce 10 MB limit (body already limited by caller).
 	const maxBytes = 10 << 20
 	if int64(len(body)) > maxBytes {
 		return nil, fmt.Errorf("file too large: %d bytes (max %d)", len(body), maxBytes)
 	}
-	if s.r2APIToken == "" || s.r2AccountID == "" || s.r2Bucket == "" {
-		return nil, fmt.Errorf("R2 storage not configured")
-	}
 
-	// Fetch current achievement to check existing file_key.
-	var oldFileKey string
-	err := s.pool.QueryRow(ctx,
-		`SELECT COALESCE(file_key, '') FROM achievements.achievements WHERE id = $1`, id,
-	).Scan(&oldFileKey)
+	// 1. Resolve the row and the key it currently points at.
+	oldFileKey, err := s.store.currentFileKey(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, pgx.ErrNoRows
 	}
@@ -178,62 +199,122 @@ func (s *AchievementService) UploadFile(ctx context.Context, id uuid.UUID, conte
 		return nil, fmt.Errorf("fetching achievement: %w", err)
 	}
 
-	// Build object key: certificates/{id}/{id}.{ext}
-	objectKey := fmt.Sprintf("certificates/%s/%s.%s", id.String(), id.String(), ext)
-
-	// Upload to R2 via Cloudflare API (PUT).
-	uploadURL := fmt.Sprintf(
-		"https://api.cloudflare.com/client/v4/accounts/%s/r2/buckets/%s/objects/%s",
-		s.r2AccountID, s.r2Bucket, objectKey,
-	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(body))
+	// 2. Upload. The key comes back shaped as
+	// certificates/{id}/file-{epoch}.{ext}.
+	_, newKey, err := s.media.Upload(ctx, token, "certificates", id.String(), "file", body)
 	if err != nil {
-		return nil, fmt.Errorf("creating upload request: %w", err)
+		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+s.r2APIToken)
-	req.Header.Set("Content-Type", contentType)
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-	resp, err := httpClient.Do(req)
+	// 3. Persist.
+	a, err := s.store.setFileMetadata(ctx, id, newKey, fileName, fileSize)
 	if err != nil {
-		return nil, fmt.Errorf("uploading to R2: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var cfErr struct {
-			Errors []struct {
-				Message string `json:"message"`
-			} `json:"errors"`
+		// The upload succeeded but the row was not updated: remove the new
+		// object rather than leaving a file nothing points at. A failure here
+		// is reported alongside the row error — the row error is the one that
+		// matters, but an orphan is worth naming.
+		if delErr := s.media.Delete(ctx, token, newKey); delErr != nil {
+			return nil, fmt.Errorf("updating row after upload (orphan %s left behind: %v): %w", newKey, delErr, err)
 		}
-		json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&cfErr)
-		detail := resp.Status
-		if len(cfErr.Errors) > 0 {
-			detail = cfErr.Errors[0].Message
-		}
-		return nil, fmt.Errorf("R2 upload failed (%s): %s", resp.Status, detail)
+		return nil, err
 	}
 
-	// Delete old object if it differs (best-effort).
-	if oldFileKey != "" && oldFileKey != objectKey {
+	// 4. The row is correct now. A stale object costs storage but breaks
+	// nothing, so a failure to remove it must not fail the upload the user
+	// just made.
+	//
+	// Detached from the request context: the caller should not wait on a
+	// cleanup call, and a client that hangs up must not cancel it.
+	if oldFileKey != "" && oldFileKey != newKey {
 		go func(key string) {
-			delURL := fmt.Sprintf(
-				"https://api.cloudflare.com/client/v4/accounts/%s/r2/buckets/%s/objects/%s",
-				s.r2AccountID, s.r2Bucket, key,
-			)
-			delReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL, nil)
-			delReq.Header.Set("Authorization", "Bearer "+s.r2APIToken)
-			delClient := &http.Client{Timeout: 30 * time.Second}
-			delResp, err := delClient.Do(delReq)
-			if err == nil {
-				delResp.Body.Close()
+			if delErr := s.media.Delete(context.WithoutCancel(ctx), token, key); delErr != nil {
+				log.Printf("media: could not remove replaced certificate (%s): %v", key, delErr)
 			}
 		}(oldFileKey)
 	}
 
-	// Update file metadata in database.
-	var a models.Achievement
+	return a, nil
+}
+
+// DeleteFile clears the file metadata for an achievement and removes the
+// object.
+//
+// The row is cleared first and the object removed after, for the same reason
+// as an upload: a row pointing at a deleted file is worse than an object
+// nothing points at. Unlike the replace path, the delete here runs
+// synchronously — the request's whole purpose is to remove the file, and
+// reporting success while it survives would be a lie.
+func (s *AchievementService) DeleteFile(ctx context.Context, token string, id uuid.UUID) (*models.Achievement, error) {
+	fileKey, err := s.store.currentFileKey(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, pgx.ErrNoRows
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetching achievement: %w", err)
+	}
+
+	a, err := s.store.setFileMetadata(ctx, id, "", nil, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	if fileKey != "" {
+		if err := s.media.Delete(ctx, token, fileKey); err != nil {
+			// The column is already clear, so the next upload will not
+			// reference this object — but it is still in the bucket. Reported
+			// rather than swallowed, because the caller asked for it gone.
+			return a, fmt.Errorf("clearing the column succeeded but removing the object failed: %w", err)
+		}
+	}
+
+	return a, nil
+}
+
+// setFileMetadata writes the file columns and returns the updated row.
+//
+// An empty key clears the columns (file_key/file_name/file_size NULL), which
+// is what DeleteFile needs; an upload passes the key it just stored. One
+// helper because the two paths must produce the same row shape — the handler
+// returns it straight to the dashboard.
+// pgAchievementStore is the production fileStore, backed by the pool.
+type pgAchievementStore struct{ pool *pgxpool.Pool }
+
+func (s *pgAchievementStore) currentFileKey(ctx context.Context, id uuid.UUID) (string, error) {
+	var key string
+	err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(file_key, '') FROM achievements.achievements WHERE id = $1`, id,
+	).Scan(&key)
+	if err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+func (s *pgAchievementStore) setFileMetadata(ctx context.Context, id uuid.UUID, key string, fileName *string, fileSize int64) (*models.Achievement, error) {
+	var (
+		a   models.Achievement
+		err error
+	)
+	if key == "" {
+		err = s.pool.QueryRow(ctx,
+			`UPDATE achievements.achievements
+			 SET file_key = NULL, file_name = NULL, file_size = NULL, updated_at = NOW()
+			 WHERE id = $1
+			 RETURNING id, title, organizer, date, type,
+			           COALESCE(file_key, ''), file_name, file_size,
+			           certificate_number, participant_as, description, valid_until,
+			           order_index, created_at`,
+			id,
+		).Scan(&a.ID, &a.Title, &a.Organizer, &a.Date, &a.Type,
+			&a.FileKey, &a.FileName, &a.FileSize,
+			&a.CertificateNumber, &a.ParticipantAs, &a.Description,
+			&a.ValidUntil, &a.OrderIndex, &a.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("clearing file metadata: %w", err)
+		}
+		return &a, nil
+	}
+
 	err = s.pool.QueryRow(ctx,
 		`UPDATE achievements.achievements
 		 SET file_key = $2, file_name = $3, file_size = $4, updated_at = NOW()
@@ -242,66 +323,13 @@ func (s *AchievementService) UploadFile(ctx context.Context, id uuid.UUID, conte
 		           COALESCE(file_key, ''), file_name, file_size,
 		           certificate_number, participant_as, description, valid_until,
 		           order_index, created_at`,
-		id, objectKey, fileName, fileSize,
+		id, key, fileName, fileSize,
 	).Scan(&a.ID, &a.Title, &a.Organizer, &a.Date, &a.Type,
 		&a.FileKey, &a.FileName, &a.FileSize,
 		&a.CertificateNumber, &a.ParticipantAs, &a.Description,
 		&a.ValidUntil, &a.OrderIndex, &a.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("updating file metadata: %w", err)
-	}
-	return &a, nil
-}
-
-// DeleteFile clears the file metadata for an achievement and best-effort
-// deletes the R2 object.
-func (s *AchievementService) DeleteFile(ctx context.Context, id uuid.UUID) (*models.Achievement, error) {
-	// Fetch current file_key for best-effort R2 delete.
-	var fileKey string
-	err := s.pool.QueryRow(ctx,
-		`SELECT COALESCE(file_key, '') FROM achievements.achievements WHERE id = $1`, id,
-	).Scan(&fileKey)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, pgx.ErrNoRows
-	}
-	if err != nil {
-		return nil, fmt.Errorf("fetching achievement: %w", err)
-	}
-
-	// Best-effort delete old R2 object.
-	if fileKey != "" {
-		go func(key string) {
-			delURL := fmt.Sprintf(
-				"https://api.cloudflare.com/client/v4/accounts/%s/r2/buckets/%s/objects/%s",
-				s.r2AccountID, s.r2Bucket, key,
-			)
-			delReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, delURL, nil)
-			delReq.Header.Set("Authorization", "Bearer "+s.r2APIToken)
-			delClient := &http.Client{Timeout: 30 * time.Second}
-			delResp, err := delClient.Do(delReq)
-			if err == nil {
-				delResp.Body.Close()
-			}
-		}(fileKey)
-	}
-
-	// Clear file metadata.
-	var a models.Achievement
-	err = s.pool.QueryRow(ctx,
-		`UPDATE achievements.achievements
-		 SET file_key = NULL, file_name = NULL, file_size = NULL, updated_at = NOW()
-		 WHERE id = $1
-		 RETURNING id, title, organizer, date, type,
-		           COALESCE(file_key, ''), file_name, file_size,
-		           certificate_number, participant_as, description, valid_until,
-		           order_index, created_at`,
-		id,
-	).Scan(&a.ID, &a.Title, &a.Organizer, &a.Date, &a.Type,
-		&a.FileKey, &a.FileName, &a.FileSize,
-		&a.CertificateNumber, &a.ParticipantAs, &a.Description,
-		&a.ValidUntil, &a.OrderIndex, &a.CreatedAt)
-	if err != nil {
-		return nil, fmt.Errorf("clearing file metadata: %w", err)
 	}
 	return &a, nil
 }

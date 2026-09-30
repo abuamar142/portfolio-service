@@ -26,6 +26,9 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-quote}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-quote-db}?sslmode=disable
       AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service-app:8080}
+      # Certificate uploads go to media-service, which owns the R2
+      # credentials. Reachable only because this app joins abuamar-net below.
+      MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:8080}
     depends_on:
       db:
         condition: service_healthy

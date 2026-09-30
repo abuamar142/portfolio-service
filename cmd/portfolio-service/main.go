@@ -52,7 +52,15 @@ func main() {
 	linkSvc := services.NewLinkService(pool)
 	snippetSvc := services.NewSnippetService(pool)
 	feedbackSvc := services.NewFeedbackService(pool)
-	achievementSvc := services.NewAchievementService(pool, cfg.R2APIToken, cfg.R2AccountID, cfg.R2Bucket)
+	// Certificate uploads go to media-service, which owns the R2 credentials
+	// and the portfolio-assets bucket. Not fatal when unset: every other
+	// endpoint keeps working, and the file routes answer 503 with a clear
+	// reason rather than the service refusing to start.
+	mediaClient := services.NewMediaClient(cfg.MediaServiceURL)
+	if !mediaClient.Configured() {
+		log.Println("warning: MEDIA_SERVICE_URL not set — certificate uploads disabled")
+	}
+	achievementSvc := services.NewAchievementService(pool, mediaClient)
 	profileSvc := services.NewProfileService(pool)
 
 	healthH := handlers.NewHealthHandler()

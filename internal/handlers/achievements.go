@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -26,13 +27,61 @@ var validAchievementTypes = map[string]bool{
 	"contribution":  true,
 }
 
+// achievementStore is the slice of the service this handler uses.
+//
+// A narrow interface rather than the concrete *AchievementService so the
+// routes can be tested against a fake — the file routes are about the
+// ordering of upload, row write and object delete, and the interesting
+// failure (the row write failing after a successful upload) cannot be
+// provoked against a real database.
+type achievementStore interface {
+	List(ctx context.Context) (*models.AchievementListResponse, error)
+	Create(ctx context.Context, req models.CreateAchievementRequest) (*models.Achievement, error)
+	Update(ctx context.Context, id uuid.UUID, req models.UpdateAchievementRequest) (*models.Achievement, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	UploadFile(ctx context.Context, token string, id uuid.UUID, contentType string, body []byte, fileName *string, fileSize int64) (*models.Achievement, error)
+	DeleteFile(ctx context.Context, token string, id uuid.UUID) (*models.Achievement, error)
+}
+
 type AchievementHandler struct {
-	AchievementService *services.AchievementService
+	AchievementService achievementStore
 	OwnerID            string
 }
 
-func NewAchievementHandler(svc *services.AchievementService, ownerID string) *AchievementHandler {
+func NewAchievementHandler(svc achievementStore, ownerID string) *AchievementHandler {
 	return &AchievementHandler{AchievementService: svc, OwnerID: ownerID}
+}
+
+// bearerToken returns the raw token from the Authorization header. The auth
+// middleware has already accepted it, so the format is known good.
+func bearerToken(r *http.Request) string {
+	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+}
+
+// writeFileError maps a file-service failure onto the status the dashboard
+// sees.
+//
+// A rejection from media-service keeps its own status and code, so "the file
+// is the wrong type" reads differently from "the media service is down" — the
+// first is the user's to fix, the second is a retry.
+func writeFileError(w http.ResponseWriter, action string, err error) {
+	switch {
+	case errors.Is(err, services.ErrMediaUnavailable):
+		response.Error(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE",
+			"file storage is not available, please try again", "")
+	default:
+		var rejected *services.ErrMediaRejected
+		if errors.As(err, &rejected) {
+			message := rejected.Message
+			if message == "" {
+				message = "file rejected"
+			}
+			response.Error(w, rejected.Status, rejected.Code, message, "")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to "+action+" file", err.Error())
+	}
 }
 
 func validateAchievementPayload(title, date, typ, organizer, certificateNumber, participantAs string) string {
@@ -231,7 +280,7 @@ func (h *AchievementHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // UploadFile godoc
 // @Summary      Upload a certificate file (owner only)
-// @Description  Upload a certificate file for an achievement to R2 storage
+// @Description  Upload a certificate file for an achievement (stored via media-service)
 // @Tags         achievements
 // @Accept       multipart/form-data
 // @Produce      json
@@ -324,13 +373,16 @@ func (h *AchievementHandler) UploadFile(w http.ResponseWriter, r *http.Request) 
 	}
 	fileSize := int64(len(body))
 
-	a, err := h.AchievementService.UploadFile(r.Context(), id, mediaType, body, fileName, fileSize)
+	// The caller's own token is forwarded to media-service, which validates it
+	// again. No service credential is minted here, so a token that is revoked
+	// cannot upload either.
+	a, err := h.AchievementService.UploadFile(r.Context(), bearerToken(r), id, mediaType, body, fileName, fileSize)
 	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "achievement not found", "")
 		return
 	}
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to upload file", err.Error())
+		writeFileError(w, "upload", err)
 		return
 	}
 
@@ -360,13 +412,13 @@ func (h *AchievementHandler) DeleteFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	a, err := h.AchievementService.DeleteFile(r.Context(), id)
+	a, err := h.AchievementService.DeleteFile(r.Context(), bearerToken(r), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		response.Error(w, http.StatusNotFound, "NOT_FOUND", "achievement not found", "")
 		return
 	}
 	if err != nil {
-		response.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete file", err.Error())
+		writeFileError(w, "delete", err)
 		return
 	}
 
