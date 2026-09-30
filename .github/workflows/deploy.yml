@@ -1,19 +1,55 @@
 name: Deploy Portfolio Service
 
+# Auto-deploy mengikuti convention VPS (/opt/ops/docs/NEW-PROJECT.md):
+#   push ke main        -> prod (/opt/portfolio-service, :8084)
+#   push ke development -> dev  (/opt/portfolio-service-dev, :8088)
+#
+# Deploy selalu lewat /opt/ops/bin/deploy-portfolio-service.sh di VPS (flock +
+# notify + health check). Job `verify` memanggil ci.yml sebagai gate, jadi push
+# yang gagal build/vet/test tidak pernah sampai ke VPS.
+
 on:
   push:
     branches: [main, development]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy (main=prod, development=dev)'
+        required: true
+        default: main
+        type: choice
+        options: [main, development]
+
+concurrency:
+  group: deploy-portfolio-service-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Gate
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    name: Deploy to VPS
+    needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1
+      - name: Tentukan branch
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "branch=${{ inputs.branch }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT }}
+          port: ${{ secrets.VPS_PORT || 22 }}
           script: |
-            bash /opt/ops/bin/deploy-portfolio-service.sh "${{ github.ref_name }}"
+            bash /opt/ops/bin/deploy-portfolio-service.sh ${{ steps.target.outputs.branch }}

@@ -13,20 +13,20 @@ import (
 // credential. Date fields marshal as "YYYY-MM-DD" in JSON and valid_until
 // is nullable (null when not applicable).
 type Achievement struct {
-	ID                uuid.UUID  `json:"id"`
-	Title             string     `json:"title"`
-	Organizer         string     `json:"organizer"`
-	Date              CustomDate `json:"date"`
-	Type              string     `json:"type"`
-	FileKey           string     `json:"file_key"`
-	FileName          *string    `json:"file_name"`
-	FileSize          *int64     `json:"file_size"`
-	CertificateNumber string     `json:"certificate_number"`
-	ParticipantAs     string     `json:"participant_as"`
-	Description       string     `json:"description"`
+	ID                uuid.UUID   `json:"id"`
+	Title             string      `json:"title"`
+	Organizer         string      `json:"organizer"`
+	Date              CustomDate  `json:"date"`
+	Type              string      `json:"type"`
+	FileKey           string      `json:"file_key"`
+	FileName          *string     `json:"file_name"`
+	FileSize          *int64      `json:"file_size"`
+	CertificateNumber string      `json:"certificate_number"`
+	ParticipantAs     string      `json:"participant_as"`
+	Description       string      `json:"description"`
 	ValidUntil        *CustomDate `json:"valid_until"`
-	OrderIndex        int        `json:"order_index"`
-	CreatedAt         time.Time  `json:"created_at"`
+	OrderIndex        int         `json:"order_index"`
+	CreatedAt         time.Time   `json:"created_at"`
 }
 
 type CreateAchievementRequest struct {
