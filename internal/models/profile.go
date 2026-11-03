@@ -58,6 +58,9 @@ type Project struct {
 	Description  string   `json:"description"`
 	Technologies []string `json:"technologies"`
 	GithubURL    string   `json:"githubUrl"`
+	// LiveURL is the deployed demo. Empty means the project only has source —
+	// the UI renders a repo link and no demo CTA.
+	LiveURL string `json:"liveUrl"`
 }
 
 type Education struct {

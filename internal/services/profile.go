@@ -114,7 +114,7 @@ func (s *ProfileService) experiences(ctx context.Context) ([]models.Experience, 
 
 func (s *ProfileService) projects(ctx context.Context) ([]models.Project, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT title, description, technologies, github_url
+		`SELECT title, description, technologies, github_url, live_url
 		 FROM profile.projects
 		 ORDER BY order_index ASC, id ASC`)
 	if err != nil {
@@ -125,7 +125,7 @@ func (s *ProfileService) projects(ctx context.Context) ([]models.Project, error)
 	items := []models.Project{}
 	for rows.Next() {
 		var it models.Project
-		if err := rows.Scan(&it.Title, &it.Description, &it.Technologies, &it.GithubURL); err != nil {
+		if err := rows.Scan(&it.Title, &it.Description, &it.Technologies, &it.GithubURL, &it.LiveURL); err != nil {
 			return nil, fmt.Errorf("scanning project: %w", err)
 		}
 		items = append(items, it)

@@ -76,7 +76,7 @@ func main() {
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.RequestID)
-	r.Use(corsMiddleware)
+	r.Use(newCORSMiddleware(cfg.AllowedOrigins))
 
 	r.Get("/api/health", healthH.ServeHTTP)
 
@@ -168,29 +168,37 @@ func runMigrations(databaseURL string) error {
 	return nil
 }
 
-var allowedOrigins = map[string]bool{
-	"https://abuamar.online":                       true,
-	"https://dev.abuamar.online":                   true,
-	"https://quote.abuamar.online":                 true,
-	"https://portfolio.abuamar.online":             true,
-	"https://portfolio-service-dev.abuamar.online": true,
-	"http://localhost:5173":                        true,
-}
+// newCORSMiddleware builds the CORS layer from the configured allow-list.
+// Origins are matched exactly — the header echoes the request origin only when
+// it is in the list, never a wildcard.
+//
+// Vary: Origin is mandatory here, not decorative. The response body/headers
+// differ per Origin, so without it a shared cache can store the un-allow-listed
+// variant (no Access-Control-Allow-Origin) and later serve it to a request
+// that would have been allowed, breaking the browser fetch. Cache-Control on
+// these endpoints does not prevent that on every layer.
+func newCORSMiddleware(origins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(origins))
+	for _, origin := range origins {
+		allowed[origin] = true
+	}
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if allowedOrigins[origin] {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, X-File-Name")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Add("Vary", "Origin")
+			origin := r.Header.Get("Origin")
+			if allowed[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, X-File-Name")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
