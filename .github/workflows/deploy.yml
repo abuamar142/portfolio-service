@@ -8,9 +8,13 @@ name: Deploy Portfolio Service
 # notify + health check). Job `verify` memanggil ci.yml sebagai gate, jadi push
 # yang gagal build/vet/test tidak pernah sampai ke VPS.
 
+# `development` is deliberately NOT listed: the dev instance
+# (portfolio-dev.abuamar.online) was decommissioned on 2026-11-04 to free VPS
+# resources. A push to it would recreate containers behind a vhost that no
+# longer exists. Revive deliberately with workflow_dispatch branch=development.
 on:
   push:
-    branches: [main, development]
+    branches: [main]
   workflow_dispatch:
     inputs:
       branch:
