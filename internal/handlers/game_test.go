@@ -352,6 +352,65 @@ func TestStreamSendsInitialState(t *testing.T) {
 	<-done
 }
 
+// Regression: the first frame was named `state` and every later one was
+// unlabelled, so it arrived as a generic `message` and a client listening on
+// `state` ignored all updates after the initial snapshot. The stream is only
+// useful if a *second* frame is delivered under the same name as the first.
+func TestStreamSendsLaterFramesAsStateEvents(t *testing.T) {
+	r, _ := newGameRouter(t)
+	code, _ := createRoom(t, r, "Amar")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/game/rooms/"+code+"/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		r.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	waitFor(t, rec, func(body string) bool { return strings.Contains(body, "data: ") })
+
+	// A second player joining must produce another named frame.
+	if status, _ := call(t, r, http.MethodPost, "/api/v1/game/rooms/"+code+"/join", map[string]any{"name": "Budi"}); status != http.StatusOK {
+		t.Fatalf("join status = %d", status)
+	}
+
+	waitFor(t, rec, func(body string) bool {
+		return strings.Count(body, "event: state") >= 2 && strings.Count(body, "data: ") >= 2
+	})
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"name":"Budi"`) {
+		t.Fatalf("second frame does not carry the join: %s", body)
+	}
+	// Every frame in the feed must be named, or a listener would drop it again.
+	if strings.Count(body, "data: ") != strings.Count(body, "event: state") {
+		t.Fatalf("unnamed frame in stream: %s", body)
+	}
+
+	cancel()
+	<-done
+}
+
+func waitFor(t *testing.T, rec *httptest.ResponseRecorder, cond func(string) bool) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		if cond(rec.Body.String()) {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("condition not met, body = %q", rec.Body.String())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // --- helpers -----------------------------------------------------------------
 
 func mustRoom(t *testing.T, manager *game.Manager, code string) *game.Room {

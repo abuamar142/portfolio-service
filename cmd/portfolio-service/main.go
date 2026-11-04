@@ -127,6 +127,7 @@ func main() {
 		// create/join, which the handler validates on every action.
 		r.Route("/game", func(r chi.Router) {
 			r.Post("/rooms", gameH.Create)
+			r.Get("/rooms/{code}", gameH.Get)
 			r.Get("/rooms/{code}/events", gameH.Stream)
 			r.Post("/rooms/{code}/join", gameH.Join)
 			r.Post("/rooms/{code}/start", gameH.Start)

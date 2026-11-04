@@ -103,6 +103,19 @@ func (h *GameHandler) Join(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Get returns the current room state.
+//
+// The SSE stream also sends this as its first frame, but a client restoring a
+// saved session needs a plain request: an EventSource aimed at a room that no
+// longer exists retries forever instead of reporting the miss.
+func (h *GameHandler) Get(w http.ResponseWriter, r *http.Request) {
+	room, ok := h.room(w, r)
+	if !ok {
+		return
+	}
+	response.JSON(w, http.StatusOK, "ok", room.Snapshot())
+}
+
 // Guess submits an answer for the current round.
 func (h *GameHandler) Guess(w http.ResponseWriter, r *http.Request) {
 	room, ok := h.room(w, r)
@@ -219,7 +232,7 @@ func (h *GameHandler) Stream(w http.ResponseWriter, r *http.Request) {
 
 	// First frame is the current state, so a late joiner or a reconnect after a
 	// dropped connection is correct without a separate fetch.
-	writeEvent(w, flusher, "state", mustJSON(room.Snapshot()))
+	writeEvent(w, flusher, mustJSON(room.Snapshot()))
 
 	keepAlive := time.NewTicker(15 * time.Second)
 	defer keepAlive.Stop()
@@ -236,7 +249,7 @@ func (h *GameHandler) Stream(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 				return
 			}
-			writeEvent(w, flusher, "", payload)
+			writeEvent(w, flusher, payload)
 		case <-keepAlive.C:
 			// Comment frames keep proxies from timing out an idle stream.
 			fmt.Fprint(w, ": ping\n\n")
@@ -272,11 +285,14 @@ func (h *GameHandler) hostAction(w http.ResponseWriter, r *http.Request, fn func
 	response.JSON(w, http.StatusOK, "ok", room.Snapshot())
 }
 
-func writeEvent(w http.ResponseWriter, flusher http.Flusher, event string, payload []byte) {
-	if event != "" {
-		fmt.Fprintf(w, "event: %s\n", event)
-	}
-	fmt.Fprintf(w, "data: %s\n\n", payload)
+// writeEvent emits one named SSE frame.
+//
+// The event name is not optional: an unlabelled frame is dispatched as a
+// generic `message`, and a client listening on `state` would silently ignore
+// every update after the first one. Naming every frame is what keeps the
+// stream and its listener in agreement.
+func writeEvent(w http.ResponseWriter, flusher http.Flusher, payload []byte) {
+	fmt.Fprintf(w, "event: state\ndata: %s\n\n", payload)
 	flusher.Flush()
 }
 
