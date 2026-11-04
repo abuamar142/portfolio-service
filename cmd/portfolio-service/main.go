@@ -16,6 +16,7 @@ import (
 
 	"github.com/abuamar142/portfolio-service/internal/config"
 	"github.com/abuamar142/portfolio-service/internal/db"
+	"github.com/abuamar142/portfolio-service/internal/game"
 	"github.com/abuamar142/portfolio-service/internal/handlers"
 	"github.com/abuamar142/portfolio-service/internal/middleware"
 	"github.com/abuamar142/portfolio-service/internal/notify"
@@ -63,6 +64,28 @@ func main() {
 	achievementSvc := services.NewAchievementService(pool, mediaClient)
 	profileSvc := services.NewProfileService(pool)
 
+	// Party game: rooms live in memory (minutes-long, worthless after the last
+	// player leaves) and the word bank is compiled in, so this needs no table
+	// and no migration.
+	gameBank := game.NewBank(game.DefaultEntries())
+	gameManager := game.NewManager(gameBank)
+	// Sweep with generous slack: a room waiting in a lobby for a late friend is
+	// not idle debris, but one untouched for six hours certainly is.
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if removed := gameManager.Sweep(6 * time.Hour); removed > 0 {
+					log.Printf("game: swept %d idle room(s)", removed)
+				}
+			}
+		}
+	}()
+
 	healthH := handlers.NewHealthHandler()
 	quoteH := handlers.NewQuoteHandler(quoteSvc)
 	linkH := handlers.NewLinkHandler(linkSvc)
@@ -70,6 +93,7 @@ func main() {
 	feedbackH := handlers.NewFeedbackHandler(feedbackSvc, cfg.OwnerID, notify.NewTelegram(cfg.TelegramBotToken, cfg.TelegramChatID))
 	achievementH := handlers.NewAchievementHandler(achievementSvc, cfg.OwnerID)
 	profileH := handlers.NewProfileHandler(profileSvc)
+	gameH := handlers.NewGameHandler(gameManager)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -96,6 +120,23 @@ func main() {
 		// reach the database or the Telegram notifier.
 		feedbackLimiter := middleware.RateLimit(middleware.NewRateLimiter(3, time.Minute))
 		r.With(feedbackLimiter).Post("/feedback", feedbackH.Create)
+
+		// Party game. Public by design — the room code is the only access
+		// control, and a code is handed out precisely so friends can join.
+		// Writes are behind no auth: a player is identified by the id issued at
+		// create/join, which the handler validates on every action.
+		r.Route("/game", func(r chi.Router) {
+			r.Post("/rooms", gameH.Create)
+			r.Get("/rooms/{code}/events", gameH.Stream)
+			r.Post("/rooms/{code}/join", gameH.Join)
+			r.Post("/rooms/{code}/start", gameH.Start)
+			r.Post("/rooms/{code}/next", gameH.Next)
+			r.Post("/rooms/{code}/restart", gameH.Restart)
+			r.Post("/rooms/{code}/settings", gameH.UpdateSettings)
+			r.Post("/rooms/{code}/guess", gameH.Guess)
+			r.Post("/rooms/{code}/score", gameH.AdjustScore)
+			r.Delete("/rooms/{code}/players/{playerID}", gameH.Leave)
+		})
 
 		r.Get("/achievements", achievementH.List)
 		// Profile: the identity block and the four ordered lists that replaced
