@@ -13,8 +13,10 @@ name: Deploy Portfolio Service
 # resources. A push to it would recreate containers behind a vhost that no
 # longer exists. Revive deliberately with workflow_dispatch branch=development.
 on:
-  push:
-    branches: [main]
+  # Disabled 2026-11-16: GitHub Actions akun terkunci billing (setiap run gagal).
+  # Deploy prod lewat pull-deploy.timer di VPS. Hidupkan lagi bila billing beres.
+  # push:
+  #   branches: [main]
   workflow_dispatch:
     inputs:
       branch:

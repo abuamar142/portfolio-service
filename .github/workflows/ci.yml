@@ -1,10 +1,12 @@
 name: CI
 
 on:
-  push:
-    branches: [main, development]
-  pull_request:
-    branches: [main, development]
+  # Disabled 2026-11-16: GitHub Actions akun terkunci billing (setiap run gagal).
+  # Deploy prod lewat pull-deploy.timer di VPS. Hidupkan lagi bila billing beres.
+  # push:
+  #   branches: [main, development]
+  # pull_request:
+  #   branches: [main, development]
   # Required for deploy.yml to call this as a reusable gate workflow.
   workflow_call:
   workflow_dispatch:
